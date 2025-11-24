@@ -2,36 +2,37 @@ import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, Package, FlaskConical, Library, ShoppingBag, 
   Plus, Search, Trash2, Edit2, CheckCircle, MapPin, 
-  X, Lock, LogOut, ArrowLeft
+  X, Lock, LogOut, ArrowLeft, AlertTriangle
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, setDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
-// --- FIREBASE DEMO AYARLARI ---
-const firebaseConfig = { apiKey: "AIzaSyC9PFnnFYo6duqfKmMWfkVNPZxtmESfcac",
+// --- BURAYA KENDİ GERÇEK BİLGİLERİNİ YAPIŞTIR ---
+const firebaseConfig = {
+  apiKey: "AIzaSyC9PFnnFYo6duqfKmMWfkVNPZxtmESfcac",
   authDomain: "parfumapp-6c10c.firebaseapp.com",
   projectId: "parfumapp-6c10c",
   storageBucket: "parfumapp-6c10c.firebasestorage.app",
   messagingSenderId: "415360983274",
   appId: "1:415360983274:web:f60879761d517c29aff793"
- };
-let app, auth, db;
-try {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-} catch (e) { console.log("Demo modu"); }
+};
 
+// --- BAĞLANTIYI BAŞLAT (TRY-CATCH YOK - HATA VARSA PATLASIN) ---
+console.log("Firebase başlatılıyor..."); // KONSOL LOG 1
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+console.log("Firebase başlatıldı ✅"); // KONSOL LOG 2
+
+const appId = 'my-perfume-app-v1';
 const APP_ACCESS_CODE = "2024"; 
 
 // --- BAŞLANGIÇ VERİLERİ ---
 const initialRaw = [
   { id: 1, name: 'Bergamot Yağı', quantity: 50, unit: 'ml', minStock: 10 },
-  { id: 2, name: 'Etil Alkol', quantity: 2000, unit: 'ml', minStock: 500 },
-  { id: 3, name: '50ml Şişe', quantity: 45, unit: 'adet', minStock: 20 },
 ];
 const initialProducts = [
   { id: 1, name: 'Midnight Rose', size: '50ml', description: 'Gece serisi.', stock: 5, price: 1200 },
@@ -48,19 +49,74 @@ export default function PerfumeMasterV3() {
   const [products, setProducts] = useState(initialProducts);
   const [batches, setBatches] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [transactions, setTransactions] = useState([]);
   const [toast, setToast] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
 
-  // Auth & Helpers
+  // --- 1. AUTH VE DİNLEME (LOGLU) ---
   useEffect(() => {
-    if(auth) signInAnonymously(auth).catch(e=>console.log(e));
+    console.log("Auth deneniyor..."); // KONSOL LOG 3
+    signInAnonymously(auth)
+      .then(() => console.log("Giriş Başarılı! ✅"))
+      .catch((e) => console.error("GİRİŞ HATASI 🚨:", e));
+
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+        if(u) {
+            console.log("Kullanıcı aktif:", u.uid); // KONSOL LOG 4
+            setUser(u);
+        } else {
+            console.log("Kullanıcı yok ❌");
+            setUser(null);
+        }
+    });
+
     if(sessionStorage.getItem('app_unlocked') === 'true') setIsAppUnlocked(true);
+    return () => unsubscribe();
   }, []);
+
+  // --- 2. VERİ DİNLEME ---
+  useEffect(() => {
+    if (!user) return;
+    const basePath = `artifacts/${appId}/public/data/app_data`;
+    
+    // Sadece bir tanesini loglayalım kirlilik olmasın
+    const unsubBatches = onSnapshot(doc(db, basePath, 'batches'), (d) => {
+        console.log("Veritabanından Veri Geldi (Batches) 📥", d.exists());
+        if (d.exists()) setBatches(d.data().items || []);
+    }, (err) => console.error("VERİ OKUMA HATASI 🚨:", err));
+
+    // Diğer dinleyiciler...
+    const unsubRaw = onSnapshot(doc(db, basePath, 'rawMaterials'), (d) => { if (d.exists()) setRawMaterials(d.data().items || []); });
+    const unsubProd = onSnapshot(doc(db, basePath, 'products'), (d) => { if (d.exists()) setProducts(d.data().items || []); });
+    const unsubOrders = onSnapshot(doc(db, basePath, 'orders'), (d) => { if (d.exists()) setOrders(d.data().items || []); });
+
+    return () => { unsubBatches(); unsubRaw(); unsubProd(); unsubOrders(); };
+  }, [user]);
+
+  // --- 3. DB KAYIT (LOGLU) ---
+  const saveToDb = async (docName, data) => {
+      console.log(`Kaydediliyor: ${docName}...`); // KONSOL LOG 5
+      if (!db) { console.error("DB YOK! ❌"); return; }
+      if (!user) { console.error("KULLANICI YOK! ❌"); return; }
+      
+      try {
+          const basePath = `artifacts/${appId}/public/data/app_data`;
+          await setDoc(doc(db, basePath, docName), { items: data });
+          console.log(`Kayıt Başarılı: ${docName} ✅`); // KONSOL LOG 6
+      } catch (error) {
+          console.error("KAYIT HATASI 🚨:", error); // BURASI HATAYI GÖSTERECEK
+          alert("HATA: " + error.message); // Ekrana da hata bassın
+      }
+  };
+
+  const updateRaw = (newData) => { setRawMaterials(newData); saveToDb('rawMaterials', newData); };
+  const updateProd = (newData) => { setProducts(newData); saveToDb('products', newData); };
+  const updateBatches = (newData) => { setBatches(newData); saveToDb('batches', newData); };
+  const updateOrders = (newData) => { setOrders(newData); saveToDb('orders', newData); };
 
   const showToast = (message, type = 'success') => { setToast({ message, type }); };
   useEffect(() => { if (toast) { const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t); } }, [toast]);
 
-  // Login Handler
   const handleLogin = (e) => {
       e.preventDefault();
       if (accessInput === APP_ACCESS_CODE) {
@@ -68,15 +124,23 @@ export default function PerfumeMasterV3() {
           sessionStorage.setItem('app_unlocked', 'true');
       } else { showToast("Hatalı Şifre!", "error"); }
   };
+  
+  const handleLogout = () => { setIsAppUnlocked(false); sessionStorage.removeItem('app_unlocked'); };
 
-  // Views
+  // --- VIEWS ---
   const ProductionView = () => {
     const [isNew, setIsNew] = useState(false);
     const [batchForm, setBatchForm] = useState({ name: '', size: '50ml', quantity: '', duration: '30' });
     
     const handleSubmit = () => {
         if(!batchForm.name || !batchForm.quantity) return;
-        setBatches([{ id: Date.now(), ...batchForm, startDate: new Date().toISOString(), status: 'macerating' }, ...batches]);
+        const newBatch = { id: Date.now(), ...batchForm, startDate: new Date().toISOString(), status: 'macerating' };
+        // Önce State'i güncelle
+        const newBatches = [newBatch, ...batches];
+        setBatches(newBatches); 
+        // Sonra DB'ye yazmayı dene
+        saveToDb('batches', newBatches);
+        
         showToast('Üretim başladı.');
         setIsNew(false);
     };
@@ -106,16 +170,13 @@ export default function PerfumeMasterV3() {
 
   const InventoryView = () => (
     <div className="space-y-4 pb-24">
-        <h2 className="text-2xl font-bold px-1">Depo</h2>
+        <div className="flex justify-between px-1"><h2 className="text-2xl font-bold">Depo</h2></div>
         <div className="grid gap-3">{rawMaterials.map(item => (<div key={item.id} className="bg-white p-4 rounded-xl border shadow-sm flex justify-between"><div><div className="font-bold">{item.name}</div><div className="text-xs text-slate-400">Min: {item.minStock}</div></div><div className="font-bold">{item.quantity} {item.unit}</div></div>))}</div>
     </div>
   );
 
   const CatalogView = () => (
-      <div className="space-y-4 pb-24">
-        <h2 className="text-2xl font-bold px-1">Katalog</h2>
-        <div className="grid gap-3">{products.map(p => (<div key={p.id} className="bg-white p-4 rounded-xl border shadow-sm flex justify-between"><div><div className="font-bold">{p.name}</div><span className="bg-slate-100 px-2 text-xs font-bold rounded">{p.size}</span></div><div className="text-right font-bold">{p.stock} Adet</div></div>))}</div>
-      </div>
+      <div className="space-y-4 pb-24"><h2 className="text-2xl font-bold px-1">Katalog</h2><div className="grid gap-3">{products.map(p => (<div key={p.id} className="bg-white p-4 rounded-xl border shadow-sm flex justify-between"><div><div className="font-bold">{p.name}</div><span className="bg-slate-100 px-2 text-xs font-bold rounded">{p.size}</span></div><div className="text-right font-bold">{p.stock} Adet</div></div>))}</div></div>
   );
 
   if (!isAppUnlocked) {
@@ -142,6 +203,4 @@ export default function PerfumeMasterV3() {
     </div>
   );
 }
-
 const NavBtn = ({ id, icon: Icon, label, active, set }) => (<button onClick={() => set(id)} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${active === id ? 'text-slate-900 bg-slate-100 scale-105' : 'text-slate-400 hover:bg-slate-50'}`}><Icon size={20} /><span className="text-[9px] font-medium">{label}</span></button>);
-// Vercel guncelleme kontrolu
