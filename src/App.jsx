@@ -144,3 +144,4 @@ export default function PerfumeMasterV3() {
 }
 
 const NavBtn = ({ id, icon: Icon, label, active, set }) => (<button onClick={() => set(id)} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${active === id ? 'text-slate-900 bg-slate-100 scale-105' : 'text-slate-400 hover:bg-slate-50'}`}><Icon size={20} /><span className="text-[9px] font-medium">{label}</span></button>);
+// Vercel guncelleme kontrolu
