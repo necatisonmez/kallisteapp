@@ -1,16 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  LayoutDashboard, Package, FlaskConical, Library, ShoppingBag, 
-  Plus, Search, Trash2, Edit2, CheckCircle, MapPin, 
-  X, Lock, LogOut, ArrowLeft, AlertTriangle
+  Package, FlaskConical, Library, ShoppingBag, 
+  Plus, Trash2, CheckCircle, MapPin, 
+  X, Lock, AlertTriangle, TrendingUp, TrendingDown,
+  Droplets, Wallet, Loader2
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  signInWithCustomToken,
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  onSnapshot
+} from 'firebase/firestore';
 
-// --- BURAYA KENDİ GERÇEK BİLGİLERİNİ YAPIŞTIR ---
+// --- INITIALIZATION ---
 const firebaseConfig = {
   apiKey: "AIzaSyC9PFnnFYo6duqfKmMWfkVNPZxtmESfcac",
   authDomain: "parfumapp-6c10c.firebaseapp.com",
@@ -19,188 +30,680 @@ const firebaseConfig = {
   messagingSenderId: "415360983274",
   appId: "1:415360983274:web:f60879761d517c29aff793"
 };
-
-// --- BAĞLANTIYI BAŞLAT (TRY-CATCH YOK - HATA VARSA PATLASIN) ---
-console.log("Firebase başlatılıyor..."); // KONSOL LOG 1
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-console.log("Firebase başlatıldı ✅"); // KONSOL LOG 2
 
-const appId = 'my-perfume-app-v1';
-const APP_ACCESS_CODE = "2024"; 
+// Use a fixed App ID to avoid path segment errors from malformed environment variables
+// and to ensure a consistent namespace for this application.
+const appId = 'kalliste-tracker-v4';
 
-// --- BAŞLANGIÇ VERİLERİ ---
-const initialRaw = [
-  { id: 1, name: 'Bergamot Yağı', quantity: 50, unit: 'ml', minStock: 10 },
-];
-const initialProducts = [
-  { id: 1, name: 'Midnight Rose', size: '50ml', description: 'Gece serisi.', stock: 5, price: 1200 },
-];
+// 1. İSTEK: ŞİFRE GÜNCELLENDİ
+const APP_ACCESS_CODE = "kalliste25"; 
 
-export default function PerfumeMasterV3() {
+// --- YARDIMCI FONKSİYONLAR ---
+const formatMoney = (amt) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(amt || 0);
+const formatDate = (d) => new Date(d).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
+const getDaysLeft = (start, duration) => {
+    const endDate = new Date(new Date(start).getTime() + (parseInt(duration) * 86400000));
+    const diff = endDate - new Date();
+    return Math.ceil(diff / (1000 * 60 * 60 * 24));
+};
+
+export default function KallisteAppV4() {
   const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [isAppUnlocked, setIsAppUnlocked] = useState(false);
   const [accessInput, setAccessInput] = useState('');
-  const [activeTab, setActiveTab] = useState('production');
+  const [activeTab, setActiveTab] = useState('production'); // Varsayılan sekme
 
-  // State
-  const [rawMaterials, setRawMaterials] = useState(initialRaw);
-  const [products, setProducts] = useState(initialProducts);
+  // --- STATES ---
+  const [rawMaterials, setRawMaterials] = useState([]);
+  const [products, setProducts] = useState([]);
   const [batches, setBatches] = useState([]);
   const [orders, setOrders] = useState([]);
   const [transactions, setTransactions] = useState([]);
+  
   const [toast, setToast] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
 
-  // --- 1. AUTH VE DİNLEME (LOGLU) ---
+  // --- AUTH SETUP ---
   useEffect(() => {
-    console.log("Auth deneniyor..."); // KONSOL LOG 3
-    signInAnonymously(auth)
-      .then(() => console.log("Giriş Başarılı! ✅"))
-      .catch((e) => console.error("GİRİŞ HATASI 🚨:", e));
-
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-        if(u) {
-            console.log("Kullanıcı aktif:", u.uid); // KONSOL LOG 4
-            setUser(u);
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
         } else {
-            console.log("Kullanıcı yok ❌");
-            setUser(null);
+          await signInAnonymously(auth);
         }
-    });
+      } catch (err) {
+        console.error("Auth init error:", err);
+      }
+    };
+    initAuth();
 
-    if(sessionStorage.getItem('app_unlocked') === 'true') setIsAppUnlocked(true);
+    const unsubscribe = onAuthStateChanged(auth, u => {
+        setUser(u);
+        setAuthLoading(false);
+    });
+    
+    // Session check for unlock status
+    if(sessionStorage.getItem('app_unlocked') === 'true') {
+        setIsAppUnlocked(true);
+    }
+
     return () => unsubscribe();
   }, []);
 
-  // --- 2. VERİ DİNLEME ---
+  // --- DATA SYNC ---
+  // Using Private Data Path: artifacts/{appId}/users/{userId}/{collectionName}/items
+  // This avoids permission issues common with public paths if rules are strict.
+  const getDocRef = (collectionName, uid) => {
+    return doc(db, 'artifacts', appId, 'users', uid, collectionName, 'items');
+  };
+
   useEffect(() => {
-    if (!user) return;
-    const basePath = `artifacts/${appId}/public/data/app_data`;
+    if (!user || !db) return;
     
-    // Sadece bir tanesini loglayalım kirlilik olmasın
-    const unsubBatches = onSnapshot(doc(db, basePath, 'batches'), (d) => {
-        console.log("Veritabanından Veri Geldi (Batches) 📥", d.exists());
-        if (d.exists()) setBatches(d.data().items || []);
-    }, (err) => console.error("VERİ OKUMA HATASI 🚨:", err));
+    const collectionsToSync = [
+        { name: 'rawMaterials', setter: setRawMaterials },
+        { name: 'products', setter: setProducts },
+        { name: 'batches', setter: setBatches },
+        { name: 'orders', setter: setOrders },
+        { name: 'transactions', setter: setTransactions }
+    ];
 
-    // Diğer dinleyiciler...
-    const unsubRaw = onSnapshot(doc(db, basePath, 'rawMaterials'), (d) => { if (d.exists()) setRawMaterials(d.data().items || []); });
-    const unsubProd = onSnapshot(doc(db, basePath, 'products'), (d) => { if (d.exists()) setProducts(d.data().items || []); });
-    const unsubOrders = onSnapshot(doc(db, basePath, 'orders'), (d) => { if (d.exists()) setOrders(d.data().items || []); });
+    const unsubs = collectionsToSync.map(({ name, setter }) => {
+        return onSnapshot(
+            getDocRef(name, user.uid), 
+            (d) => {
+                if (d.exists()) {
+                    setter(d.data().items || []);
+                } else {
+                    setter([]);
+                }
+            },
+            (error) => {
+                console.error(`Sync error for ${name}:`, error);
+                // Silent fail or less intrusive notification after first load
+                if (error.code === 'permission-denied') {
+                    // It's possible the user doc doesn't exist yet and create permissions are tricky, 
+                    // but usually private paths are safe.
+                }
+            }
+        );
+    });
 
-    return () => { unsubBatches(); unsubRaw(); unsubProd(); unsubOrders(); };
+    return () => unsubs.forEach(u => u());
   }, [user]);
 
-  // --- 3. DB KAYIT (LOGLU) ---
-  const saveToDb = async (docName, data) => {
-      console.log(`Kaydediliyor: ${docName}...`); // KONSOL LOG 5
-      if (!db) { console.error("DB YOK! ❌"); return; }
-      if (!user) { console.error("KULLANICI YOK! ❌"); return; }
-      
+  // --- GENEL VERİTABANI YAZMA ---
+  const saveToDb = async (collectionName, data) => {
+      if(!db || !user) return;
       try {
-          const basePath = `artifacts/${appId}/public/data/app_data`;
-          await setDoc(doc(db, basePath, docName), { items: data });
-          console.log(`Kayıt Başarılı: ${docName} ✅`); // KONSOL LOG 6
-      } catch (error) {
-          console.error("KAYIT HATASI 🚨:", error); // BURASI HATAYI GÖSTERECEK
-          alert("HATA: " + error.message); // Ekrana da hata bassın
+          await setDoc(getDocRef(collectionName, user.uid), { items: data });
+      } catch(e) { 
+          console.error("Save failed:", e);
+          showToast("Kaydedilemedi: Erişim hatası", "error"); 
       }
   };
 
-  const updateRaw = (newData) => { setRawMaterials(newData); saveToDb('rawMaterials', newData); };
-  const updateProd = (newData) => { setProducts(newData); saveToDb('products', newData); };
-  const updateBatches = (newData) => { setBatches(newData); saveToDb('batches', newData); };
-  const updateOrders = (newData) => { setOrders(newData); saveToDb('orders', newData); };
+  const showToast = (message, type='success') => { setToast({message, type}); setTimeout(()=>setToast(null), 3000); };
+  const showConfirm = (message, onConfirm) => setConfirmModal({message, onConfirm});
 
-  const showToast = (message, type = 'success') => { setToast({ message, type }); };
-  useEffect(() => { if (toast) { const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t); } }, [toast]);
-
-  const handleLogin = (e) => {
-      e.preventDefault();
-      if (accessInput === APP_ACCESS_CODE) {
-          setIsAppUnlocked(true);
-          sessionStorage.setItem('app_unlocked', 'true');
-      } else { showToast("Hatalı Şifre!", "error"); }
+  // --- İŞLEM GEÇMİŞİ EKLEME (FİNANS) ---
+  const addTransaction = (type, desc, amount) => {
+      const newTrans = { id: Date.now(), type, desc, amount: parseFloat(amount), date: new Date().toISOString() };
+      const updated = [newTrans, ...transactions];
+      setTransactions(updated);
+      saveToDb('transactions', updated);
   };
-  
-  const handleLogout = () => { setIsAppUnlocked(false); sessionStorage.removeItem('app_unlocked'); };
 
-  // --- VIEWS ---
+  // --- 3. BÖLÜM: ÜRETİM (PRODUCTION) ---
   const ProductionView = () => {
     const [isNew, setIsNew] = useState(false);
-    const [batchForm, setBatchForm] = useState({ name: '', size: '50ml', quantity: '', duration: '30' });
-    
-    const handleSubmit = () => {
-        if(!batchForm.name || !batchForm.quantity) return;
-        const newBatch = { id: Date.now(), ...batchForm, startDate: new Date().toISOString(), status: 'macerating' };
-        // Önce State'i güncelle
-        const newBatches = [newBatch, ...batches];
-        setBatches(newBatches); 
-        // Sonra DB'ye yazmayı dene
-        saveToDb('batches', newBatches);
+    const [form, setForm] = useState({ name: '', quantity: '', duration: '30', ingredients: [] });
+    const [selIng, setSelIng] = useState('');
+    const [selAmount, setSelAmount] = useState('');
+
+    const addIngredient = () => {
+        const mat = rawMaterials.find(r => r.id === parseInt(selIng));
+        if(!mat || !selAmount) return;
+        setForm({...form, ingredients: [...form.ingredients, { ...mat, usedAmount: parseFloat(selAmount) }]});
+        setSelIng(''); setSelAmount('');
+    };
+
+    const handleStartProduction = () => {
+        if(!form.name || !form.quantity) return;
         
-        showToast('Üretim başladı.');
+        // 1. Hammaddeden Düş
+        let stockError = false;
+        const newRaw = rawMaterials.map(r => {
+            const used = form.ingredients.find(i => i.id === r.id);
+            if(used) {
+                if(r.quantity < used.usedAmount) stockError = true;
+                return { ...r, quantity: r.quantity - used.usedAmount };
+            }
+            return r;
+        });
+
+        if(stockError) { showToast('Yetersiz Hammadde Stoğu!', 'error'); return; }
+
+        // 2. Hammaddeyi Güncelle
+        setRawMaterials(newRaw);
+        saveToDb('rawMaterials', newRaw);
+
+        // 3. Üretimi Başlat (Batches)
+        const batchId = `PRD-${Math.floor(Math.random()*10000)}`;
+        const newBatch = { 
+            id: batchId, 
+            name: form.name, 
+            quantity: parseInt(form.quantity), 
+            startDate: new Date().toISOString(), 
+            duration: parseInt(form.duration), 
+            status: 'macerating', // demleniyor
+            ingredients: form.ingredients
+        };
+        const updatedBatches = [newBatch, ...batches];
+        setBatches(updatedBatches);
+        saveToDb('batches', updatedBatches);
+
+        showToast(`${form.quantity} adet ${form.name} üretime alındı.`);
         setIsNew(false);
+    };
+
+    const handleBottle = (batch) => {
+        // 4. Şişeleme (Stoklara Ekle)
+        showConfirm(`${batch.name} şişelenip stoğa eklensin mi?`, () => {
+            // Katalogda var mı bak
+            const existingProd = products.find(p => p.name === batch.name);
+            let newProducts;
+            
+            if(existingProd) {
+                newProducts = products.map(p => p.id === existingProd.id ? { ...p, stock: p.stock + batch.quantity } : p);
+            } else {
+                newProducts = [...products, { id: Date.now(), name: batch.name, stock: batch.quantity, price: 0, size: '50ml' }];
+            }
+            
+            setProducts(newProducts);
+            saveToDb('products', newProducts);
+
+            // Üretimi "Tamamlandı" işaretle veya sil (Ben 'completed' yapıp saklıyorum)
+            const updatedBatches = batches.map(b => b.id === batch.id ? { ...b, status: 'completed', bottleDate: new Date().toISOString() } : b);
+            setBatches(updatedBatches);
+            saveToDb('batches', updatedBatches);
+            showToast('Kataloğa eklendi!');
+        });
     };
 
     return (
         <div className="space-y-4 pb-24">
-            <div className="flex justify-between items-center px-1"><h2 className="text-2xl font-bold">Üretim</h2><button onClick={()=>setIsNew(true)} className="bg-slate-900 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1"><FlaskConical size={16}/> Yeni</button></div>
-            {isNew && (
-                <div className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-4">
-                    <div className="bg-white w-full max-w-md rounded-2xl p-6 space-y-3">
-                         <h3 className="font-bold">Yeni Parti</h3>
-                         <input className="w-full p-2 border rounded" placeholder="Parfüm Adı" value={batchForm.name} onChange={e=>setBatchForm({...batchForm, name:e.target.value})} />
-                         <div className="flex gap-2"><input type="number" className="flex-1 p-2 border rounded" placeholder="Adet" value={batchForm.quantity} onChange={e=>setBatchForm({...batchForm, quantity:e.target.value})} /><input type="number" className="flex-1 p-2 border rounded" placeholder="Gün" value={batchForm.duration} onChange={e=>setBatchForm({...batchForm, duration:e.target.value})} /></div>
-                         <button onClick={handleSubmit} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl">Başlat</button>
-                         <button onClick={()=>setIsNew(false)} className="w-full py-2 bg-slate-100 rounded-xl">İptal</button>
-                    </div>
-                </div>
-            )}
-            <div className="space-y-3">{batches.map(b => (
-                <div key={b.id} className="bg-white p-4 rounded-xl border shadow-sm">
-                    <h3 className="font-bold">{b.name}</h3><div className="text-xs text-slate-500">{b.quantity} Adet • {b.duration} Gün</div>
-                </div>
-            ))}</div>
+             <div className="flex justify-between items-center px-1">
+                <h2 className="text-2xl font-bold text-slate-800">Üretim</h2>
+                <button onClick={()=>setIsNew(true)} className="bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg hover:bg-slate-800 transition-all"><FlaskConical size={18}/> Yeni Parti</button>
+             </div>
+
+             {/* AKTİF ÜRETİMLER */}
+             <div className="grid gap-3">
+                {batches.filter(b => b.status === 'macerating').map(batch => {
+                    const daysLeft = getDaysLeft(batch.startDate, batch.duration);
+                    const progress = Math.min(100, Math.max(0, 100 - (daysLeft / batch.duration * 100)));
+                    const isReady = daysLeft <= 0;
+
+                    return (
+                        <div key={batch.id} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm relative overflow-hidden">
+                            <div className="flex justify-between items-start mb-2 relative z-10">
+                                <div>
+                                    <div className="text-xs text-slate-400 font-bold tracking-wider mb-1">{batch.id}</div>
+                                    <h3 className="font-bold text-lg text-slate-800">{batch.name}</h3>
+                                    <div className="text-sm text-slate-500">{batch.quantity} Şişe Hedefleniyor</div>
+                                </div>
+                                <div className={`text-center p-2 rounded-xl min-w-[80px] ${isReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                                    <div className="font-bold text-xl">{isReady ? <CheckCircle size={24} className="mx-auto"/> : daysLeft}</div>
+                                    <div className="text-[10px] uppercase font-bold">{isReady ? 'HAZIR' : 'GÜN KALDI'}</div>
+                                </div>
+                            </div>
+                            
+                            {/* Progress Bar */}
+                            <div className="w-full bg-slate-100 h-2 rounded-full mb-3 overflow-hidden">
+                                <div className={`h-full transition-all duration-1000 ${isReady ? 'bg-emerald-500' : 'bg-amber-400'}`} style={{width: `${progress}%`}}></div>
+                            </div>
+
+                            {/* Hammaddeler */}
+                            <div className="text-xs text-slate-400 mb-3">
+                                {batch.ingredients?.map(i => i.name).join(', ')} kullanıldı.
+                            </div>
+
+                            {isReady && (
+                                <button onClick={()=>handleBottle(batch)} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-slate-800 transition-colors">
+                                    <Package size={18}/> Şişele ve Stoğa Ekle
+                                </button>
+                            )}
+                        </div>
+                    );
+                })}
+                {batches.filter(b => b.status === 'macerating').length === 0 && <div className="text-center text-slate-400 py-10">Aktif üretim yok.</div>}
+             </div>
+
+             {/* YENİ ÜRETİM MODALI */}
+             {isNew && (
+                 <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
+                     <div className="bg-white w-full max-w-md rounded-2xl p-6 space-y-4 animate-in slide-in-from-bottom-10 max-h-[85vh] overflow-y-auto">
+                        <div className="flex justify-between items-center border-b pb-4">
+                            <h3 className="font-bold text-lg">Yeni Üretim Başlat</h3>
+                            <button onClick={()=>setIsNew(false)} className="p-2 bg-slate-100 rounded-full"><X size={20}/></button>
+                        </div>
+                        
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase">Parfüm Adı</label>
+                            <input className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1 font-medium" placeholder="Örn: Royal Oud" value={form.name} onChange={e=>setForm({...form, name:e.target.value})} />
+                        </div>
+
+                        <div className="flex gap-3">
+                            <div className="flex-1">
+                                <label className="text-xs font-bold text-slate-500 uppercase">Hedef (Adet)</label>
+                                <input type="number" className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1" value={form.quantity} onChange={e=>setForm({...form, quantity:e.target.value})} />
+                            </div>
+                            <div className="flex-1">
+                                <label className="text-xs font-bold text-slate-500 uppercase">Süre (Gün)</label>
+                                <input type="number" className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1" value={form.duration} onChange={e=>setForm({...form, duration:e.target.value})} />
+                            </div>
+                        </div>
+
+                        {/* Hammadde Seçici */}
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                            <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Reçete / Kullanılan Malzemeler</label>
+                            <div className="flex gap-2 mb-3">
+                                <select className="flex-1 p-2 border rounded-lg text-sm" value={selIng} onChange={e=>setSelIng(e.target.value)}>
+                                    <option value="">Malzeme Seç...</option>
+                                    {rawMaterials.map(r => <option key={r.id} value={r.id}>{r.name} ({r.quantity} {r.unit})</option>)}
+                                </select>
+                                <input className="w-20 p-2 border rounded-lg text-sm" placeholder="Miktar" value={selAmount} onChange={e=>setSelAmount(e.target.value)} />
+                                <button onClick={addIngredient} className="bg-emerald-500 text-white p-2 rounded-lg"><Plus size={20}/></button>
+                            </div>
+                            <div className="space-y-2">
+                                {form.ingredients.map((ing, idx) => (
+                                    <div key={idx} className="flex justify-between text-sm bg-white p-2 rounded border border-slate-100">
+                                        <span>{ing.name}</span>
+                                        <span className="font-bold text-rose-500">-{ing.usedAmount} {ing.unit}</span>
+                                    </div>
+                                ))}
+                                {form.ingredients.length === 0 && <div className="text-xs text-slate-400 text-center italic">Henüz malzeme eklenmedi.</div>}
+                            </div>
+                        </div>
+
+                        <button onClick={handleStartProduction} className="w-full py-4 bg-slate-900 text-white font-bold rounded-xl text-lg shadow-xl hover:bg-slate-800">Üretimi Başlat</button>
+                     </div>
+                 </div>
+             )}
         </div>
     );
   };
 
-  const InventoryView = () => (
-    <div className="space-y-4 pb-24">
-        <div className="flex justify-between px-1"><h2 className="text-2xl font-bold">Depo</h2></div>
-        <div className="grid gap-3">{rawMaterials.map(item => (<div key={item.id} className="bg-white p-4 rounded-xl border shadow-sm flex justify-between"><div><div className="font-bold">{item.name}</div><div className="text-xs text-slate-400">Min: {item.minStock}</div></div><div className="font-bold">{item.quantity} {item.unit}</div></div>))}</div>
-    </div>
-  );
+  // --- 4. BÖLÜM: KATALOG (CATALOG) ---
+  const CatalogView = () => {
+    const [editProd, setEditProd] = useState(null);
 
-  const CatalogView = () => (
-      <div className="space-y-4 pb-24"><h2 className="text-2xl font-bold px-1">Katalog</h2><div className="grid gap-3">{products.map(p => (<div key={p.id} className="bg-white p-4 rounded-xl border shadow-sm flex justify-between"><div><div className="font-bold">{p.name}</div><span className="bg-slate-100 px-2 text-xs font-bold rounded">{p.size}</span></div><div className="text-right font-bold">{p.stock} Adet</div></div>))}</div></div>
-  );
+    const handleSell = (prod) => {
+        showConfirm(`${prod.name} satışı yapılsın mı? Stoktan 1 düşülecek.`, () => {
+             // Stok Düş
+             const newProds = products.map(p => p.id === prod.id ? { ...p, stock: p.stock - 1 } : p);
+             setProducts(newProds);
+             saveToDb('products', newProds);
 
+             // Finansa Ekle
+             if(prod.price > 0) addTransaction('income', `${prod.name} Satışı`, prod.price);
+             
+             showToast('Satış başarılı! Gelir eklendi.');
+        });
+    };
+
+    const updatePrice = () => {
+        const newProds = products.map(p => p.id === editProd.id ? editProd : p);
+        setProducts(newProds);
+        saveToDb('products', newProds);
+        setEditProd(null);
+    };
+
+    return (
+        <div className="space-y-4 pb-24">
+            <h2 className="text-2xl font-bold px-1 text-slate-800">Katalog</h2>
+            
+            {/* Gelecek Ürünler (Maceration'dakiler) */}
+            {batches.some(b => b.status === 'macerating') && (
+                <div className="mb-4">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase mb-2 px-1">Yakında Gelecekler</h3>
+                    <div className="flex gap-3 overflow-x-auto pb-2">
+                        {batches.filter(b => b.status === 'macerating').map(b => (
+                            <div key={b.id} className="min-w-[140px] bg-amber-50 p-3 rounded-xl border border-amber-100 flex-shrink-0">
+                                <div className="font-bold text-slate-800 text-sm truncate">{b.name}</div>
+                                <div className="text-xs text-amber-600 font-bold">{getDaysLeft(b.startDate, b.duration)} gün kaldı</div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            <div className="grid gap-3">
+                {products.map(p => (
+                    <div key={p.id} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-3">
+                        <div className="flex justify-between items-start">
+                            <div>
+                                <h3 className="font-bold text-lg text-slate-800">{p.name}</h3>
+                                <span className="bg-slate-100 text-slate-500 px-2 py-0.5 rounded text-xs font-bold">{p.size || '50ml'}</span>
+                            </div>
+                            <div className="text-right">
+                                <div className={`text-sm font-bold px-2 py-1 rounded ${p.stock > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                                    {p.stock > 0 ? `${p.stock} Stok` : 'Tükendi'}
+                                </div>
+                                <div className="font-bold text-slate-900 mt-1">{formatMoney(p.price)}</div>
+                            </div>
+                        </div>
+                        <div className="flex gap-2 pt-2 border-t border-slate-50">
+                            <button onClick={()=>handleSell(p)} disabled={p.stock<=0} className="flex-1 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold disabled:opacity-50">
+                                {p.stock > 0 ? 'Satış Yap' : 'Stok Yok'}
+                            </button>
+                            <button onClick={()=>setEditProd(p)} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold">Düzenle</button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {editProd && (
+                 <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                     <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-3">
+                        <h3 className="font-bold">Fiyat Düzenle</h3>
+                        <input className="w-full p-2 border rounded-lg" type="number" value={editProd.price} onChange={e=>setEditProd({...editProd, price:parseFloat(e.target.value)})}/>
+                        <button onClick={updatePrice} className="w-full py-2 bg-slate-900 text-white rounded-lg">Kaydet</button>
+                        <button onClick={()=>setEditProd(null)} className="w-full py-2 bg-slate-100 rounded-lg">İptal</button>
+                     </div>
+                 </div>
+            )}
+        </div>
+    );
+  };
+
+  // --- 5. BÖLÜM: HAMMADDELER (RAW MATERIALS) ---
+  const MaterialsView = () => {
+    const [isAdd, setIsAdd] = useState(false);
+    const [form, setForm] = useState({ name: '', quantity: '', unit: 'ml', minStock: '', cost: '' });
+
+    const handleSave = () => {
+        if(!form.name) return;
+        const newItem = { id: Date.now(), name: form.name, quantity: parseFloat(form.quantity), unit: form.unit, minStock: parseFloat(form.minStock) };
+        const newRaw = [...rawMaterials, newItem];
+        setRawMaterials(newRaw);
+        saveToDb('rawMaterials', newRaw);
+        
+        if(form.cost) addTransaction('expense', `${form.name} Alımı`, form.cost);
+        
+        setIsAdd(false); setForm({ name: '', quantity: '', unit: 'ml', minStock: '', cost: '' });
+    };
+
+    const handleDelete = (id) => {
+        showConfirm('Bu malzeme silinsin mi?', () => {
+            const newRaw = rawMaterials.filter(r => r.id !== id);
+            setRawMaterials(newRaw);
+            saveToDb('rawMaterials', newRaw);
+        });
+    };
+
+    return (
+        <div className="space-y-4 pb-24">
+            <div className="flex justify-between items-center px-1">
+                <h2 className="text-2xl font-bold text-slate-800">Hammaddeler</h2>
+                <button onClick={()=>setIsAdd(true)} className="bg-slate-900 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1"><Plus size={16}/> Ekle</button>
+            </div>
+
+            {isAdd && (
+                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+                    <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-3">
+                        <h3 className="font-bold">Yeni Malzeme</h3>
+                        <input className="w-full p-2 border rounded-lg" placeholder="Adı (Örn: Etil Alkol)" value={form.name} onChange={e=>setForm({...form, name:e.target.value})} />
+                        <div className="flex gap-2">
+                            <input className="flex-1 p-2 border rounded-lg" type="number" placeholder="Miktar" value={form.quantity} onChange={e=>setForm({...form, quantity:e.target.value})} />
+                            <select className="p-2 border rounded-lg" value={form.unit} onChange={e=>setForm({...form, unit:e.target.value})}>
+                                <option value="ml">ml (Sıvı)</option>
+                                <option value="gr">gr (Katı)</option>
+                                <option value="adet">Adet (Şişe)</option>
+                            </select>
+                        </div>
+                        <input className="w-full p-2 border rounded-lg" type="number" placeholder="Min Stok Uyarısı" value={form.minStock} onChange={e=>setForm({...form, minStock:e.target.value})} />
+                        <input className="w-full p-2 border rounded-lg" type="number" placeholder="Maliyet (TL) - Opsiyonel" value={form.cost} onChange={e=>setForm({...form, cost:e.target.value})} />
+                        <button onClick={handleSave} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl">Kaydet</button>
+                        <button onClick={()=>setIsAdd(false)} className="w-full py-2 bg-slate-100 rounded-xl">İptal</button>
+                    </div>
+                </div>
+            )}
+
+            <div className="grid gap-3">
+                {rawMaterials.map(m => (
+                    <div key={m.id} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex justify-between items-center">
+                        <div className="flex items-center gap-3">
+                            <div className={`p-2 rounded-full ${m.unit === 'adet' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                                {m.unit === 'adet' ? <Package size={18}/> : <Droplets size={18}/>}
+                            </div>
+                            <div>
+                                <div className="font-bold text-slate-800">{m.name}</div>
+                                <div className="text-xs text-slate-400">Min: {m.minStock} {m.unit}</div>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <div className="text-right">
+                                <div className="font-bold text-lg">{m.quantity} <span className="text-xs font-normal text-slate-400">{m.unit}</span></div>
+                            </div>
+                            <button onClick={()=>handleDelete(m.id)} className="p-2 text-rose-300 hover:text-rose-600"><Trash2 size={16}/></button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+  };
+
+  // --- 6. BÖLÜM: SİPARİŞLER (ORDERS) ---
+  const OrdersView = () => {
+    const [isAdd, setIsAdd] = useState(false);
+    const [newOrd, setNewOrd] = useState({ customer: '', product: '', quantity: 1 });
+
+    const handleAddOrder = () => {
+        if(!newOrd.customer || !newOrd.product) return;
+        
+        // Stok Kontrolü
+        const product = products.find(p => p.name === newOrd.product);
+        let status = 'waiting'; // Varsayılan: Üretim Bekliyor
+        let note = 'Stok yok, üretim bekleniyor.';
+
+        if(product && product.stock >= parseInt(newOrd.quantity)) {
+            status = 'reserved';
+            note = 'Stoktan ayrıldı, teslimat bekleniyor.';
+            // Stoktan geçici düş (Rezerve mantığı)
+            const newProds = products.map(p => p.id === product.id ? { ...p, stock: p.stock - parseInt(newOrd.quantity) } : p);
+            setProducts(newProds);
+            saveToDb('products', newProds);
+        }
+
+        const order = { id: Date.now(), ...newOrd, status, note, date: new Date().toISOString() };
+        const newOrders = [order, ...orders];
+        setOrders(newOrders);
+        saveToDb('orders', newOrders);
+        
+        showToast(status === 'reserved' ? 'Rezerve edildi.' : 'Sıraya alındı.');
+        setIsAdd(false); setNewOrd({ customer: '', product: '', quantity: 1 });
+    };
+
+    const handleDeliver = (order) => {
+        showConfirm('Teslim edildi ve ücreti alındı mı?', () => {
+            // Finansa Ekle (Gelir)
+            // Ürün fiyatını bulmaya çalış
+            const prod = products.find(p => p.name === order.product);
+            const price = prod ? prod.price * order.quantity : 0;
+            
+            if(price > 0) addTransaction('income', `${order.product} Teslimat (${order.customer})`, price);
+
+            // Siparişi Tamamlandı Yap
+            const updatedOrders = orders.map(o => o.id === order.id ? { ...o, status: 'completed' } : o);
+            setOrders(updatedOrders);
+            saveToDb('orders', updatedOrders);
+            showToast('Teslim edildi!');
+        });
+    };
+
+    return (
+        <div className="space-y-4 pb-24">
+            <div className="flex justify-between items-center px-1">
+                <h2 className="text-2xl font-bold text-slate-800">Siparişler</h2>
+                <button onClick={()=>setIsAdd(true)} className="bg-slate-900 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1"><Plus size={16}/> Ekle</button>
+            </div>
+
+            {isAdd && (
+                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+                    <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-3">
+                        <h3 className="font-bold">Yeni Sipariş</h3>
+                        <input className="w-full p-2 border rounded-lg" placeholder="Müşteri Adı" value={newOrd.customer} onChange={e=>setNewOrd({...newOrd, customer:e.target.value})} />
+                        <select className="w-full p-2 border rounded-lg" value={newOrd.product} onChange={e=>setNewOrd({...newOrd, product:e.target.value})}>
+                            <option value="">Parfüm Seç...</option>
+                            {[...products.map(p=>p.name), ...batches.map(b=>b.name)].filter((v,i,a)=>a.indexOf(v)===i).map((n,i)=><option key={i} value={n}>{n}</option>)}
+                        </select>
+                        <input type="number" className="w-full p-2 border rounded-lg" placeholder="Adet" value={newOrd.quantity} onChange={e=>setNewOrd({...newOrd, quantity:e.target.value})} />
+                        <button onClick={handleAddOrder} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl">Kaydet</button>
+                        <button onClick={()=>setIsAdd(false)} className="w-full py-2 bg-slate-100 rounded-xl">İptal</button>
+                    </div>
+                </div>
+            )}
+
+            <div className="grid gap-3">
+                {orders.filter(o => o.status !== 'completed').map(o => (
+                    <div key={o.id} className={`p-4 rounded-xl border flex flex-col gap-2 ${o.status === 'reserved' ? 'bg-white border-emerald-100 shadow-sm' : 'bg-slate-50 border-slate-200 opacity-90'}`}>
+                        <div className="flex justify-between items-start">
+                            <div>
+                                <div className="font-bold text-slate-800">{o.customer}</div>
+                                <div className="text-sm text-slate-600">{o.product} x {o.quantity}</div>
+                            </div>
+                            <div className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${o.status === 'reserved' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {o.status === 'reserved' ? 'Rezerve' : 'Üretim Bekliyor'}
+                            </div>
+                        </div>
+                        <div className="text-xs text-slate-400 italic flex items-center gap-1"><MapPin size={12}/> {o.note}</div>
+                        {o.status === 'reserved' && (
+                            <button onClick={()=>handleDeliver(o)} className="w-full py-2 bg-slate-900 text-white text-xs font-bold rounded-lg mt-1">Teslim Et & Tahsilat Yap</button>
+                        )}
+                    </div>
+                ))}
+                {orders.length === 0 && <div className="text-center text-slate-400 py-10">Bekleyen sipariş yok.</div>}
+            </div>
+        </div>
+    );
+  };
+
+  // --- 7. BÖLÜM: FİNANS (FINANCE) ---
+  const FinanceView = () => {
+      const income = transactions.filter(t => t.type === 'income').reduce((a,b)=>a+b.amount, 0);
+      const expense = transactions.filter(t => t.type === 'expense').reduce((a,b)=>a+b.amount, 0);
+      const profit = income - expense;
+
+      return (
+          <div className="space-y-6 pb-24">
+              <h2 className="text-2xl font-bold px-1 text-slate-800">Finans</h2>
+              
+              {/* Kartlar */}
+              <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-emerald-500 text-white p-5 rounded-2xl shadow-lg shadow-emerald-200">
+                      <div className="flex items-center gap-2 mb-1 opacity-80"><TrendingUp size={16}/><span className="text-xs font-bold uppercase">Gelir</span></div>
+                      <div className="text-2xl font-bold">{formatMoney(income)}</div>
+                  </div>
+                  <div className="bg-rose-500 text-white p-5 rounded-2xl shadow-lg shadow-rose-200">
+                      <div className="flex items-center gap-2 mb-1 opacity-80"><TrendingDown size={16}/><span className="text-xs font-bold uppercase">Gider</span></div>
+                      <div className="text-2xl font-bold">{formatMoney(expense)}</div>
+                  </div>
+              </div>
+              
+              <div className="bg-slate-900 text-white p-6 rounded-2xl shadow-xl flex justify-between items-center">
+                  <div>
+                      <div className="text-xs text-slate-400 font-bold uppercase mb-1">Net Kâr</div>
+                      <div className={`text-3xl font-bold ${profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatMoney(profit)}</div>
+                  </div>
+                  <div className="p-3 bg-white/10 rounded-full"><Wallet size={32}/></div>
+              </div>
+
+              {/* Hareketler */}
+              <div>
+                  <h3 className="text-xs font-bold text-slate-400 uppercase mb-3 px-1">Son Hareketler</h3>
+                  <div className="space-y-3">
+                      {transactions.slice(0, 10).map(t => (
+                          <div key={t.id} className="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center text-sm">
+                              <div>
+                                  <div className="font-bold text-slate-700">{t.desc}</div>
+                                  <div className="text-xs text-slate-400">{formatDate(t.date)}</div>
+                              </div>
+                              <div className={`font-bold ${t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                  {t.type === 'income' ? '+' : '-'}{formatMoney(t.amount)}
+                              </div>
+                          </div>
+                      ))}
+                      {transactions.length === 0 && <div className="text-center text-slate-400 italic text-xs">Henüz işlem yok.</div>}
+                  </div>
+              </div>
+          </div>
+      );
+  };
+
+  // --- ANA RENDER ---
   if (!isAppUnlocked) {
       return (
           <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-6">
-              <div className="bg-white p-8 rounded-2xl w-full max-w-sm shadow-2xl text-center">
-                  <div className="bg-amber-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"><Lock className="text-amber-600" size={32} /></div>
-                  <h1 className="text-2xl font-serif font-bold text-slate-900 mb-2">Parfumeur Pro</h1>
-                  <form onSubmit={handleLogin}>
-                      <input type="password" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-center text-2xl tracking-widest font-bold mb-4 outline-none" placeholder="Şifre" value={accessInput} onChange={(e) => setAccessInput(e.target.value)} />
-                      <button type="submit" className="w-full py-4 bg-slate-900 text-white font-bold rounded-xl">Giriş Yap</button>
+              <div className="bg-white p-8 rounded-3xl w-full max-w-sm shadow-2xl text-center">
+                  <div className="bg-amber-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"><Lock className="text-amber-600" size={40} /></div>
+                  <h1 className="text-3xl font-serif font-bold text-slate-900 mb-2">Kalliste</h1>
+                  <p className="text-sm text-slate-500 mb-8 tracking-widest uppercase font-bold">Yönetim Paneli</p>
+                  <form onSubmit={(e)=>{e.preventDefault(); if(accessInput===APP_ACCESS_CODE){setIsAppUnlocked(true); sessionStorage.setItem('app_unlocked','true');}else{showToast('Hatalı Şifre','error');}}}>
+                      <input type="password" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-center text-2xl tracking-[0.5em] font-bold mb-4 outline-none focus:ring-4 focus:ring-amber-100 transition-all" placeholder="••••" value={accessInput} onChange={(e) => setAccessInput(e.target.value)} />
+                      <button type="submit" className="w-full py-4 bg-slate-900 text-white font-bold rounded-xl shadow-lg hover:bg-slate-800 transition-transform active:scale-95">GİRİŞ</button>
                   </form>
               </div>
           </div>
       );
   }
 
+  // Auth Loading
+  if (authLoading) {
+      return (
+          <div className="h-screen bg-slate-50 flex items-center justify-center">
+              <Loader2 className="animate-spin text-slate-400" size={32}/>
+          </div>
+      );
+  }
+
   return (
     <div className="flex flex-col h-screen bg-slate-50 font-sans text-slate-900 relative">
-      {toast && (<div className={`fixed top-6 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-xl z-50 text-white font-bold text-sm ${toast.type==='error'?'bg-rose-600':'bg-emerald-600'}`}>{toast.message}</div>)}
+      {toast && (<div className={`fixed top-6 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-2xl z-[60] text-white font-bold text-sm flex items-center gap-2 animate-in slide-in-from-top-5 ${toast.type==='error'?'bg-rose-600':'bg-emerald-600'}`}><span>{toast.type==='error'?<AlertTriangle size={16}/>:<CheckCircle size={16}/>}</span> {toast.message}</div>)}
+      {confirmModal && (<div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6"><div className="bg-white w-full max-w-sm p-6 rounded-2xl text-center shadow-2xl animate-in zoom-in-95"><div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-600"><AlertTriangle/></div><h3 className="font-bold text-lg mb-2 text-slate-800">Emin misiniz?</h3><p className="text-sm text-slate-500 mb-6">{confirmModal.message}</p><div className="flex gap-3"><button onClick={()=>setConfirmModal(null)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl">Vazgeç</button><button onClick={()=>{confirmModal.onConfirm(); setConfirmModal(null)}} className="flex-1 py-3 bg-slate-900 text-white font-bold rounded-xl">Onayla</button></div></div></div>)}
+      
       <div className="h-safe-top bg-white w-full"></div>
-      <main className="flex-1 overflow-y-auto p-4">{activeTab === 'production' && <ProductionView />}{activeTab === 'catalog' && <CatalogView />}{activeTab === 'inventory' && <InventoryView />}</main>
-      <div className="fixed bottom-0 w-full bg-white/90 backdrop-blur-md border-t pb-safe-bottom z-40"><div className="flex justify-around items-center h-16"><NavBtn id="production" icon={FlaskConical} label="Üretim" active={activeTab} set={setActiveTab} /><NavBtn id="catalog" icon={Library} label="Katalog" active={activeTab} set={setActiveTab} /><NavBtn id="inventory" icon={Package} label="Depo" active={activeTab} set={setActiveTab} /></div></div>
+      <main className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+          {activeTab === 'production' && <ProductionView />}
+          {activeTab === 'catalog' && <CatalogView />}
+          {activeTab === 'materials' && <MaterialsView />}
+          {activeTab === 'orders' && <OrdersView />}
+          {activeTab === 'finance' && <FinanceView />}
+      </main>
+      
+      <div className="fixed bottom-0 w-full bg-white/95 backdrop-blur-xl border-t border-slate-200 pb-safe-bottom z-40 shadow-[0_-5px_20px_rgba(0,0,0,0.03)]">
+          <div className="flex justify-around items-center h-20 px-2">
+              <NavBtn id="production" icon={FlaskConical} label="Üretim" active={activeTab} set={setActiveTab} />
+              <NavBtn id="catalog" icon={Library} label="Katalog" active={activeTab} set={setActiveTab} />
+              <NavBtn id="materials" icon={Droplets} label="Hammadde" active={activeTab} set={setActiveTab} />
+              <NavBtn id="orders" icon={ShoppingBag} label="Sipariş" active={activeTab} set={setActiveTab} />
+              <NavBtn id="finance" icon={Wallet} label="Finans" active={activeTab} set={setActiveTab} />
+          </div>
+      </div>
     </div>
   );
 }
-const NavBtn = ({ id, icon: Icon, label, active, set }) => (<button onClick={() => set(id)} className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${active === id ? 'text-slate-900 bg-slate-100 scale-105' : 'text-slate-400 hover:bg-slate-50'}`}><Icon size={20} /><span className="text-[9px] font-medium">{label}</span></button>);
+
+const NavBtn = ({ id, icon: Icon, label, active, set }) => (
+    <button onClick={() => set(id)} className={`flex flex-col items-center gap-1.5 p-2 rounded-2xl transition-all duration-300 w-16 ${active === id ? 'text-slate-900 bg-slate-100 -translate-y-2 shadow-lg ring-1 ring-slate-200' : 'text-slate-400 hover:text-slate-600'}`}>
+        <Icon size={22} strokeWidth={active === id ? 2.5 : 2} className="transition-transform duration-300" />
+        <span className="text-[9px] font-bold tracking-wide">{label}</span>
+    </button>
+);
