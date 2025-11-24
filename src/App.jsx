@@ -3,7 +3,7 @@ import {
   Package, FlaskConical, Library, ShoppingBag, 
   Plus, Trash2, CheckCircle, MapPin, 
   X, Lock, AlertTriangle, TrendingUp, TrendingDown,
-  Droplets, Wallet, Loader2
+  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -11,7 +11,6 @@ import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   signInAnonymously, 
-  signInWithCustomToken,
   onAuthStateChanged 
 } from 'firebase/auth';
 import { 
@@ -21,7 +20,7 @@ import {
   onSnapshot
 } from 'firebase/firestore';
 
-// --- INITIALIZATION ---
+// --- INITIALIZATION (SİZİN VERİLERİNİZ) ---
 const firebaseConfig = {
   apiKey: "AIzaSyC9PFnnFYo6duqfKmMWfkVNPZxtmESfcac",
   authDomain: "parfumapp-6c10c.firebaseapp.com",
@@ -30,15 +29,16 @@ const firebaseConfig = {
   messagingSenderId: "415360983274",
   appId: "1:415360983274:web:f60879761d517c29aff793"
 };
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Use a fixed App ID to avoid path segment errors from malformed environment variables
-// and to ensure a consistent namespace for this application.
-const appId = 'kalliste-tracker-v4';
+// Veritabanı içinde verilerin saklanacağı ana klasör adı.
+// Teknik App ID yerine temiz bir isim kullanıyoruz.
+const DATA_NAMESPACE = 'kalliste-tracker-v4';
 
-// 1. İSTEK: ŞİFRE GÜNCELLENDİ
+// GİRİŞ ŞİFRESİ
 const APP_ACCESS_CODE = "kalliste25"; 
 
 // --- YARDIMCI FONKSİYONLAR ---
@@ -55,7 +55,7 @@ export default function KallisteAppV4() {
   const [authLoading, setAuthLoading] = useState(true);
   const [isAppUnlocked, setIsAppUnlocked] = useState(false);
   const [accessInput, setAccessInput] = useState('');
-  const [activeTab, setActiveTab] = useState('production'); // Varsayılan sekme
+  const [activeTab, setActiveTab] = useState('production'); 
 
   // --- STATES ---
   const [rawMaterials, setRawMaterials] = useState([]);
@@ -71,13 +71,11 @@ export default function KallisteAppV4() {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
+        // Direkt anonim giriş yapıyoruz, custom token karmaşasına gerek yok.
+        await signInAnonymously(auth);
       } catch (err) {
         console.error("Auth init error:", err);
+        showToast("Giriş yapılamadı. Firebase Console'dan Anonymous Auth açık mı?", "error");
       }
     };
     initAuth();
@@ -87,7 +85,6 @@ export default function KallisteAppV4() {
         setAuthLoading(false);
     });
     
-    // Session check for unlock status
     if(sessionStorage.getItem('app_unlocked') === 'true') {
         setIsAppUnlocked(true);
     }
@@ -95,11 +92,11 @@ export default function KallisteAppV4() {
     return () => unsubscribe();
   }, []);
 
-  // --- DATA SYNC ---
-  // Using Private Data Path: artifacts/{appId}/users/{userId}/{collectionName}/items
-  // This avoids permission issues common with public paths if rules are strict.
-  const getDocRef = (collectionName, uid) => {
-    return doc(db, 'artifacts', appId, 'users', uid, collectionName, 'items');
+  // --- DATA SYNC (ORTAK VERİTABANI) ---
+  const getDocRef = (collectionName) => {
+    // Yol: artifacts / [NAMESPACE] / public / data / [COLLECTION] / items
+    // Bu yol yapısı sabittir ve hata vermez.
+    return doc(db, 'artifacts', DATA_NAMESPACE, 'public', 'data', collectionName, 'items');
   };
 
   useEffect(() => {
@@ -115,7 +112,7 @@ export default function KallisteAppV4() {
 
     const unsubs = collectionsToSync.map(({ name, setter }) => {
         return onSnapshot(
-            getDocRef(name, user.uid), 
+            getDocRef(name), 
             (d) => {
                 if (d.exists()) {
                     setter(d.data().items || []);
@@ -125,10 +122,9 @@ export default function KallisteAppV4() {
             },
             (error) => {
                 console.error(`Sync error for ${name}:`, error);
-                // Silent fail or less intrusive notification after first load
                 if (error.code === 'permission-denied') {
-                    // It's possible the user doc doesn't exist yet and create permissions are tricky, 
-                    // but usually private paths are safe.
+                     // İzin hatası durumunda kullanıcıyı uyarmak yerine konsola yazıyoruz
+                     // Kullanıcı Firebase kurallarını düzelttiyse burası çalışır.
                 }
             }
         );
@@ -137,21 +133,21 @@ export default function KallisteAppV4() {
     return () => unsubs.forEach(u => u());
   }, [user]);
 
-  // --- GENEL VERİTABANI YAZMA ---
+  // --- KAYIT FONKSİYONU ---
   const saveToDb = async (collectionName, data) => {
       if(!db || !user) return;
       try {
-          await setDoc(getDocRef(collectionName, user.uid), { items: data });
+          await setDoc(getDocRef(collectionName), { items: data });
       } catch(e) { 
           console.error("Save failed:", e);
-          showToast("Kaydedilemedi: Erişim hatası", "error"); 
+          showToast("Kaydedilemedi: Yetki hatası.", "error"); 
       }
   };
 
   const showToast = (message, type='success') => { setToast({message, type}); setTimeout(()=>setToast(null), 3000); };
   const showConfirm = (message, onConfirm) => setConfirmModal({message, onConfirm});
 
-  // --- İŞLEM GEÇMİŞİ EKLEME (FİNANS) ---
+  // --- İŞLEM GEÇMİŞİ ---
   const addTransaction = (type, desc, amount) => {
       const newTrans = { id: Date.now(), type, desc, amount: parseFloat(amount), date: new Date().toISOString() };
       const updated = [newTrans, ...transactions];
@@ -159,12 +155,25 @@ export default function KallisteAppV4() {
       saveToDb('transactions', updated);
   };
 
-  // --- 3. BÖLÜM: ÜRETİM (PRODUCTION) ---
+  // --- 3. BÖLÜM: ÜRETİM ---
   const ProductionView = () => {
     const [isNew, setIsNew] = useState(false);
     const [form, setForm] = useState({ name: '', quantity: '', duration: '30', ingredients: [] });
     const [selIng, setSelIng] = useState('');
     const [selAmount, setSelAmount] = useState('');
+
+    // Kritik Sipariş Analizi
+    const criticalOrders = orders.filter(o => o.status === 'needs_production');
+    const productionTargets = criticalOrders.reduce((acc, curr) => {
+        const existing = acc.find(item => item.name === curr.product);
+        if(existing) {
+            existing.totalNeeded += parseInt(curr.quantity);
+            existing.orderCount += 1;
+        } else {
+            acc.push({ name: curr.product, totalNeeded: parseInt(curr.quantity), orderCount: 1 });
+        }
+        return acc;
+    }, []);
 
     const addIngredient = () => {
         const mat = rawMaterials.find(r => r.id === parseInt(selIng));
@@ -176,7 +185,6 @@ export default function KallisteAppV4() {
     const handleStartProduction = () => {
         if(!form.name || !form.quantity) return;
         
-        // 1. Hammaddeden Düş
         let stockError = false;
         const newRaw = rawMaterials.map(r => {
             const used = form.ingredients.find(i => i.id === r.id);
@@ -189,11 +197,9 @@ export default function KallisteAppV4() {
 
         if(stockError) { showToast('Yetersiz Hammadde Stoğu!', 'error'); return; }
 
-        // 2. Hammaddeyi Güncelle
         setRawMaterials(newRaw);
         saveToDb('rawMaterials', newRaw);
 
-        // 3. Üretimi Başlat (Batches)
         const batchId = `PRD-${Math.floor(Math.random()*10000)}`;
         const newBatch = { 
             id: batchId, 
@@ -201,21 +207,41 @@ export default function KallisteAppV4() {
             quantity: parseInt(form.quantity), 
             startDate: new Date().toISOString(), 
             duration: parseInt(form.duration), 
-            status: 'macerating', // demleniyor
+            status: 'macerating',
             ingredients: form.ingredients
         };
         const updatedBatches = [newBatch, ...batches];
         setBatches(updatedBatches);
         saveToDb('batches', updatedBatches);
 
+        // Sipariş Durumu Güncelleme
+        const updatedOrders = orders.map(o => {
+            if(o.status === 'needs_production' && o.product === form.name) {
+                return { ...o, status: 'waiting', note: 'Üretim başlatıldı, bekleniyor.' };
+            }
+            return o;
+        });
+        if(JSON.stringify(updatedOrders) !== JSON.stringify(orders)) {
+            setOrders(updatedOrders);
+            saveToDb('orders', updatedOrders);
+        }
+
         showToast(`${form.quantity} adet ${form.name} üretime alındı.`);
         setIsNew(false);
     };
 
+    const handleQuickProduce = (targetName, targetQty) => {
+        setForm({ 
+            name: targetName, 
+            quantity: targetQty, 
+            duration: '30', 
+            ingredients: [] 
+        });
+        setIsNew(true);
+    };
+
     const handleBottle = (batch) => {
-        // 4. Şişeleme (Stoklara Ekle)
         showConfirm(`${batch.name} şişelenip stoğa eklensin mi?`, () => {
-            // Katalogda var mı bak
             const existingProd = products.find(p => p.name === batch.name);
             let newProducts;
             
@@ -228,7 +254,6 @@ export default function KallisteAppV4() {
             setProducts(newProducts);
             saveToDb('products', newProducts);
 
-            // Üretimi "Tamamlandı" işaretle veya sil (Ben 'completed' yapıp saklıyorum)
             const updatedBatches = batches.map(b => b.id === batch.id ? { ...b, status: 'completed', bottleDate: new Date().toISOString() } : b);
             setBatches(updatedBatches);
             saveToDb('batches', updatedBatches);
@@ -240,8 +265,37 @@ export default function KallisteAppV4() {
         <div className="space-y-4 pb-24">
              <div className="flex justify-between items-center px-1">
                 <h2 className="text-2xl font-bold text-slate-800">Üretim</h2>
-                <button onClick={()=>setIsNew(true)} className="bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg hover:bg-slate-800 transition-all"><FlaskConical size={18}/> Yeni Parti</button>
+                <button onClick={()=>{
+                    setForm({ name: '', quantity: '', duration: '30', ingredients: [] });
+                    setIsNew(true);
+                }} className="bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg hover:bg-slate-800 transition-all"><FlaskConical size={18}/> Yeni Parti</button>
              </div>
+
+            {/* ACİL ÜRETİM HEDEFLERİ */}
+            {productionTargets.length > 0 && (
+                <div className="bg-rose-50 border border-rose-100 rounded-2xl p-4 animate-in slide-in-from-top-2">
+                    <div className="flex items-center gap-2 text-rose-700 mb-3">
+                        <AlertCircle size={20} />
+                        <h3 className="font-bold text-sm uppercase">Acil Üretim Hedefleri</h3>
+                    </div>
+                    <div className="space-y-2">
+                        {productionTargets.map((target, idx) => (
+                            <div key={idx} className="bg-white p-3 rounded-xl border border-rose-100 flex justify-between items-center shadow-sm">
+                                <div>
+                                    <div className="font-bold text-slate-800">{target.name}</div>
+                                    <div className="text-xs text-rose-500 font-bold">{target.totalNeeded} adet eksik ({target.orderCount} sipariş)</div>
+                                </div>
+                                <button 
+                                    onClick={() => handleQuickProduce(target.name, target.totalNeeded)}
+                                    className="bg-rose-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-rose-600 transition-colors"
+                                >
+                                    Üret <ArrowRight size={12}/>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
              {/* AKTİF ÜRETİMLER */}
              <div className="grid gap-3">
@@ -264,12 +318,10 @@ export default function KallisteAppV4() {
                                 </div>
                             </div>
                             
-                            {/* Progress Bar */}
                             <div className="w-full bg-slate-100 h-2 rounded-full mb-3 overflow-hidden">
                                 <div className={`h-full transition-all duration-1000 ${isReady ? 'bg-emerald-500' : 'bg-amber-400'}`} style={{width: `${progress}%`}}></div>
                             </div>
 
-                            {/* Hammaddeler */}
                             <div className="text-xs text-slate-400 mb-3">
                                 {batch.ingredients?.map(i => i.name).join(', ')} kullanıldı.
                             </div>
@@ -282,7 +334,9 @@ export default function KallisteAppV4() {
                         </div>
                     );
                 })}
-                {batches.filter(b => b.status === 'macerating').length === 0 && <div className="text-center text-slate-400 py-10">Aktif üretim yok.</div>}
+                {batches.filter(b => b.status === 'macerating').length === 0 && productionTargets.length === 0 && (
+                    <div className="text-center text-slate-400 py-10">Aktif üretim veya hedef yok.</div>
+                )}
              </div>
 
              {/* YENİ ÜRETİM MODALI */}
@@ -310,7 +364,6 @@ export default function KallisteAppV4() {
                             </div>
                         </div>
 
-                        {/* Hammadde Seçici */}
                         <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                             <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Reçete / Kullanılan Malzemeler</label>
                             <div className="flex gap-2 mb-3">
@@ -340,20 +393,16 @@ export default function KallisteAppV4() {
     );
   };
 
-  // --- 4. BÖLÜM: KATALOG (CATALOG) ---
+  // --- 4. BÖLÜM: KATALOG ---
   const CatalogView = () => {
     const [editProd, setEditProd] = useState(null);
 
     const handleSell = (prod) => {
         showConfirm(`${prod.name} satışı yapılsın mı? Stoktan 1 düşülecek.`, () => {
-             // Stok Düş
              const newProds = products.map(p => p.id === prod.id ? { ...p, stock: p.stock - 1 } : p);
              setProducts(newProds);
              saveToDb('products', newProds);
-
-             // Finansa Ekle
              if(prod.price > 0) addTransaction('income', `${prod.name} Satışı`, prod.price);
-             
              showToast('Satış başarılı! Gelir eklendi.');
         });
     };
@@ -369,7 +418,6 @@ export default function KallisteAppV4() {
         <div className="space-y-4 pb-24">
             <h2 className="text-2xl font-bold px-1 text-slate-800">Katalog</h2>
             
-            {/* Gelecek Ürünler (Maceration'dakiler) */}
             {batches.some(b => b.status === 'macerating') && (
                 <div className="mb-4">
                     <h3 className="text-xs font-bold text-slate-400 uppercase mb-2 px-1">Yakında Gelecekler</h3>
@@ -423,7 +471,7 @@ export default function KallisteAppV4() {
     );
   };
 
-  // --- 5. BÖLÜM: HAMMADDELER (RAW MATERIALS) ---
+  // --- 5. BÖLÜM: HAMMADDELER ---
   const MaterialsView = () => {
     const [isAdd, setIsAdd] = useState(false);
     const [form, setForm] = useState({ name: '', quantity: '', unit: 'ml', minStock: '', cost: '' });
@@ -501,7 +549,7 @@ export default function KallisteAppV4() {
     );
   };
 
-  // --- 6. BÖLÜM: SİPARİŞLER (ORDERS) ---
+  // --- 6. BÖLÜM: SİPARİŞLER ---
   const OrdersView = () => {
     const [isAdd, setIsAdd] = useState(false);
     const [newOrd, setNewOrd] = useState({ customer: '', product: '', quantity: 1 });
@@ -509,39 +557,43 @@ export default function KallisteAppV4() {
     const handleAddOrder = () => {
         if(!newOrd.customer || !newOrd.product) return;
         
-        // Stok Kontrolü
         const product = products.find(p => p.name === newOrd.product);
-        let status = 'waiting'; // Varsayılan: Üretim Bekliyor
-        let note = 'Stok yok, üretim bekleniyor.';
+        const activeBatch = batches.find(b => b.name === newOrd.product && b.status === 'macerating');
+
+        let status = 'needs_production'; 
+        let note = 'Stok yok, üretim planlanmalı!';
+        let variant = 'rose';
 
         if(product && product.stock >= parseInt(newOrd.quantity)) {
             status = 'reserved';
             note = 'Stoktan ayrıldı, teslimat bekleniyor.';
-            // Stoktan geçici düş (Rezerve mantığı)
+            variant = 'emerald';
             const newProds = products.map(p => p.id === product.id ? { ...p, stock: p.stock - parseInt(newOrd.quantity) } : p);
             setProducts(newProds);
             saveToDb('products', newProds);
+        } else if (activeBatch) {
+            status = 'waiting';
+            note = 'Üretimde (Demleniyor), bekleniyor.';
+            variant = 'amber';
         }
 
-        const order = { id: Date.now(), ...newOrd, status, note, date: new Date().toISOString() };
+        const order = { id: Date.now(), ...newOrd, status, note, variant, date: new Date().toISOString() };
         const newOrders = [order, ...orders];
         setOrders(newOrders);
         saveToDb('orders', newOrders);
         
-        showToast(status === 'reserved' ? 'Rezerve edildi.' : 'Sıraya alındı.');
+        if (status === 'reserved') showToast('Rezerve edildi.');
+        else if (status === 'waiting') showToast('Sıraya alındı (Üretimde).', 'warning');
+        else showToast('DİKKAT: Üretim gerekli!', 'error');
+
         setIsAdd(false); setNewOrd({ customer: '', product: '', quantity: 1 });
     };
 
     const handleDeliver = (order) => {
         showConfirm('Teslim edildi ve ücreti alındı mı?', () => {
-            // Finansa Ekle (Gelir)
-            // Ürün fiyatını bulmaya çalış
             const prod = products.find(p => p.name === order.product);
             const price = prod ? prod.price * order.quantity : 0;
-            
             if(price > 0) addTransaction('income', `${order.product} Teslimat (${order.customer})`, price);
-
-            // Siparişi Tamamlandı Yap
             const updatedOrders = orders.map(o => o.id === order.id ? { ...o, status: 'completed' } : o);
             setOrders(updatedOrders);
             saveToDb('orders', updatedOrders);
@@ -573,30 +625,50 @@ export default function KallisteAppV4() {
             )}
 
             <div className="grid gap-3">
-                {orders.filter(o => o.status !== 'completed').map(o => (
-                    <div key={o.id} className={`p-4 rounded-xl border flex flex-col gap-2 ${o.status === 'reserved' ? 'bg-white border-emerald-100 shadow-sm' : 'bg-slate-50 border-slate-200 opacity-90'}`}>
-                        <div className="flex justify-between items-start">
-                            <div>
-                                <div className="font-bold text-slate-800">{o.customer}</div>
-                                <div className="text-sm text-slate-600">{o.product} x {o.quantity}</div>
+                {orders.filter(o => o.status !== 'completed').map(o => {
+                    let bgClass = 'bg-slate-50 border-slate-200';
+                    let statusColor = 'bg-slate-100 text-slate-700';
+                    let statusText = 'Bilinmiyor';
+
+                    if (o.status === 'reserved') {
+                        bgClass = 'bg-white border-emerald-100 shadow-sm';
+                        statusColor = 'bg-emerald-100 text-emerald-700';
+                        statusText = 'Rezerve';
+                    } else if (o.status === 'waiting') {
+                        bgClass = 'bg-amber-50 border-amber-200 shadow-sm';
+                        statusColor = 'bg-amber-100 text-amber-700';
+                        statusText = 'Üretim Bekliyor';
+                    } else if (o.status === 'needs_production') {
+                        bgClass = 'bg-rose-50 border-rose-200 shadow-sm';
+                        statusColor = 'bg-rose-100 text-rose-700';
+                        statusText = 'Üretim Gerekli';
+                    }
+
+                    return (
+                        <div key={o.id} className={`p-4 rounded-xl border flex flex-col gap-2 ${bgClass}`}>
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <div className="font-bold text-slate-800">{o.customer}</div>
+                                    <div className="text-sm text-slate-600">{o.product} x {o.quantity}</div>
+                                </div>
+                                <div className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${statusColor}`}>
+                                    {statusText}
+                                </div>
                             </div>
-                            <div className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${o.status === 'reserved' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                                {o.status === 'reserved' ? 'Rezerve' : 'Üretim Bekliyor'}
-                            </div>
+                            <div className="text-xs text-slate-500 italic flex items-center gap-1"><MapPin size={12}/> {o.note}</div>
+                            {o.status === 'reserved' && (
+                                <button onClick={()=>handleDeliver(o)} className="w-full py-2 bg-slate-900 text-white text-xs font-bold rounded-lg mt-1">Teslim Et & Tahsilat Yap</button>
+                            )}
                         </div>
-                        <div className="text-xs text-slate-400 italic flex items-center gap-1"><MapPin size={12}/> {o.note}</div>
-                        {o.status === 'reserved' && (
-                            <button onClick={()=>handleDeliver(o)} className="w-full py-2 bg-slate-900 text-white text-xs font-bold rounded-lg mt-1">Teslim Et & Tahsilat Yap</button>
-                        )}
-                    </div>
-                ))}
+                    );
+                })}
                 {orders.length === 0 && <div className="text-center text-slate-400 py-10">Bekleyen sipariş yok.</div>}
             </div>
         </div>
     );
   };
 
-  // --- 7. BÖLÜM: FİNANS (FINANCE) ---
+  // --- 7. BÖLÜM: FİNANS ---
   const FinanceView = () => {
       const income = transactions.filter(t => t.type === 'income').reduce((a,b)=>a+b.amount, 0);
       const expense = transactions.filter(t => t.type === 'expense').reduce((a,b)=>a+b.amount, 0);
@@ -606,7 +678,6 @@ export default function KallisteAppV4() {
           <div className="space-y-6 pb-24">
               <h2 className="text-2xl font-bold px-1 text-slate-800">Finans</h2>
               
-              {/* Kartlar */}
               <div className="grid grid-cols-2 gap-4">
                   <div className="bg-emerald-500 text-white p-5 rounded-2xl shadow-lg shadow-emerald-200">
                       <div className="flex items-center gap-2 mb-1 opacity-80"><TrendingUp size={16}/><span className="text-xs font-bold uppercase">Gelir</span></div>
@@ -626,7 +697,6 @@ export default function KallisteAppV4() {
                   <div className="p-3 bg-white/10 rounded-full"><Wallet size={32}/></div>
               </div>
 
-              {/* Hareketler */}
               <div>
                   <h3 className="text-xs font-bold text-slate-400 uppercase mb-3 px-1">Son Hareketler</h3>
                   <div className="space-y-3">
@@ -665,7 +735,6 @@ export default function KallisteAppV4() {
       );
   }
 
-  // Auth Loading
   if (authLoading) {
       return (
           <div className="h-screen bg-slate-50 flex items-center justify-center">
@@ -676,10 +745,16 @@ export default function KallisteAppV4() {
 
   return (
     <div className="flex flex-col h-screen bg-slate-50 font-sans text-slate-900 relative">
-      {toast && (<div className={`fixed top-6 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-2xl z-[60] text-white font-bold text-sm flex items-center gap-2 animate-in slide-in-from-top-5 ${toast.type==='error'?'bg-rose-600':'bg-emerald-600'}`}><span>{toast.type==='error'?<AlertTriangle size={16}/>:<CheckCircle size={16}/>}</span> {toast.message}</div>)}
+      {toast && (<div className={`fixed top-6 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-2xl z-[60] text-white font-bold text-sm flex items-center gap-2 animate-in slide-in-from-top-5 ${toast.type==='error'?'bg-rose-600': (toast.type==='warning'?'bg-amber-500':'bg-emerald-600')}`}><span>{toast.type==='error'?<AlertTriangle size={16}/>:<CheckCircle size={16}/>}</span> {toast.message}</div>)}
       {confirmModal && (<div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6"><div className="bg-white w-full max-w-sm p-6 rounded-2xl text-center shadow-2xl animate-in zoom-in-95"><div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-600"><AlertTriangle/></div><h3 className="font-bold text-lg mb-2 text-slate-800">Emin misiniz?</h3><p className="text-sm text-slate-500 mb-6">{confirmModal.message}</p><div className="flex gap-3"><button onClick={()=>setConfirmModal(null)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl">Vazgeç</button><button onClick={()=>{confirmModal.onConfirm(); setConfirmModal(null)}} className="flex-1 py-3 bg-slate-900 text-white font-bold rounded-xl">Onayla</button></div></div></div>)}
       
       <div className="h-safe-top bg-white w-full"></div>
+      
+      {/* Ortak Veri İndikatörü */}
+      <div className="absolute top-4 left-4 z-50 flex items-center gap-1.5 bg-emerald-100 text-emerald-800 px-3 py-1.5 rounded-full text-[10px] font-bold shadow-sm border border-emerald-200">
+        <Globe size={12}/> <span>CANLI: ORTAK VERİ</span>
+      </div>
+
       <main className="flex-1 overflow-y-auto p-4 custom-scrollbar">
           {activeTab === 'production' && <ProductionView />}
           {activeTab === 'catalog' && <CatalogView />}
