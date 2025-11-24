@@ -3,7 +3,7 @@ import {
   Package, FlaskConical, Library, ShoppingBag, 
   Plus, Trash2, CheckCircle, MapPin, 
   X, Lock, AlertTriangle, TrendingUp, TrendingDown,
-  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe
+  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe, Clock, PenTool
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -35,7 +35,6 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 // Veritabanı içinde verilerin saklanacağı ana klasör adı.
-// Teknik App ID yerine temiz bir isim kullanıyoruz.
 const DATA_NAMESPACE = 'kalliste-tracker-v4';
 
 // GİRİŞ ŞİFRESİ
@@ -71,11 +70,10 @@ export default function KallisteAppV4() {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        // Direkt anonim giriş yapıyoruz, custom token karmaşasına gerek yok.
         await signInAnonymously(auth);
       } catch (err) {
         console.error("Auth init error:", err);
-        showToast("Giriş yapılamadı. Firebase Console'dan Anonymous Auth açık mı?", "error");
+        showToast("Giriş yapılamadı. İnternet bağlantınızı kontrol edin.", "error");
       }
     };
     initAuth();
@@ -94,8 +92,6 @@ export default function KallisteAppV4() {
 
   // --- DATA SYNC (ORTAK VERİTABANI) ---
   const getDocRef = (collectionName) => {
-    // Yol: artifacts / [NAMESPACE] / public / data / [COLLECTION] / items
-    // Bu yol yapısı sabittir ve hata vermez.
     return doc(db, 'artifacts', DATA_NAMESPACE, 'public', 'data', collectionName, 'items');
   };
 
@@ -122,10 +118,6 @@ export default function KallisteAppV4() {
             },
             (error) => {
                 console.error(`Sync error for ${name}:`, error);
-                if (error.code === 'permission-denied') {
-                     // İzin hatası durumunda kullanıcıyı uyarmak yerine konsola yazıyoruz
-                     // Kullanıcı Firebase kurallarını düzelttiyse burası çalışır.
-                }
             }
         );
     });
@@ -214,10 +206,9 @@ export default function KallisteAppV4() {
         setBatches(updatedBatches);
         saveToDb('batches', updatedBatches);
 
-        // Sipariş Durumu Güncelleme
         const updatedOrders = orders.map(o => {
             if(o.status === 'needs_production' && o.product === form.name) {
-                return { ...o, status: 'waiting', note: 'Üretim başlatıldı, bekleniyor.' };
+                return { ...o, status: 'waiting', note: 'Üretim başlatıldı, demleniyor.' };
             }
             return o;
         });
@@ -271,7 +262,6 @@ export default function KallisteAppV4() {
                 }} className="bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg hover:bg-slate-800 transition-all"><FlaskConical size={18}/> Yeni Parti</button>
              </div>
 
-            {/* ACİL ÜRETİM HEDEFLERİ */}
             {productionTargets.length > 0 && (
                 <div className="bg-rose-50 border border-rose-100 rounded-2xl p-4 animate-in slide-in-from-top-2">
                     <div className="flex items-center gap-2 text-rose-700 mb-3">
@@ -297,7 +287,6 @@ export default function KallisteAppV4() {
                 </div>
             )}
 
-             {/* AKTİF ÜRETİMLER */}
              <div className="grid gap-3">
                 {batches.filter(b => b.status === 'macerating').map(batch => {
                     const daysLeft = getDaysLeft(batch.startDate, batch.duration);
@@ -339,7 +328,6 @@ export default function KallisteAppV4() {
                 )}
              </div>
 
-             {/* YENİ ÜRETİM MODALI */}
              {isNew && (
                  <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
                      <div className="bg-white w-full max-w-md rounded-2xl p-6 space-y-4 animate-in slide-in-from-bottom-10 max-h-[85vh] overflow-y-auto">
@@ -552,6 +540,7 @@ export default function KallisteAppV4() {
   // --- 6. BÖLÜM: SİPARİŞLER ---
   const OrdersView = () => {
     const [isAdd, setIsAdd] = useState(false);
+    const [isManualInput, setIsManualInput] = useState(false);
     const [newOrd, setNewOrd] = useState({ customer: '', product: '', quantity: 1 });
 
     const handleAddOrder = () => {
@@ -582,11 +571,11 @@ export default function KallisteAppV4() {
         setOrders(newOrders);
         saveToDb('orders', newOrders);
         
-        if (status === 'reserved') showToast('Rezerve edildi.');
-        else if (status === 'waiting') showToast('Sıraya alındı (Üretimde).', 'warning');
-        else showToast('DİKKAT: Üretim gerekli!', 'error');
+        if (status === 'reserved') showToast('✅ Rezerve Edildi');
+        else if (status === 'waiting') showToast('⏳ Sıraya Alındı (Üretimde)');
+        else showToast('🚨 DİKKAT: Üretim Planlanmalı!', 'error');
 
-        setIsAdd(false); setNewOrd({ customer: '', product: '', quantity: 1 });
+        setIsAdd(false); setNewOrd({ customer: '', product: '', quantity: 1 }); setIsManualInput(false);
     };
 
     const handleDeliver = (order) => {
@@ -613,10 +602,34 @@ export default function KallisteAppV4() {
                     <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-3">
                         <h3 className="font-bold">Yeni Sipariş</h3>
                         <input className="w-full p-2 border rounded-lg" placeholder="Müşteri Adı" value={newOrd.customer} onChange={e=>setNewOrd({...newOrd, customer:e.target.value})} />
-                        <select className="w-full p-2 border rounded-lg" value={newOrd.product} onChange={e=>setNewOrd({...newOrd, product:e.target.value})}>
-                            <option value="">Parfüm Seç...</option>
-                            {[...products.map(p=>p.name), ...batches.map(b=>b.name)].filter((v,i,a)=>a.indexOf(v)===i).map((n,i)=><option key={i} value={n}>{n}</option>)}
-                        </select>
+                        
+                        {/* Ürün Seçimi: Dropdown veya Manuel Giriş */}
+                        <div className="flex gap-2">
+                            {isManualInput ? (
+                                <input 
+                                    className="w-full p-2 border rounded-lg bg-slate-50 animate-in fade-in" 
+                                    placeholder="Yeni Parfüm Adı Giriniz" 
+                                    value={newOrd.product} 
+                                    autoFocus
+                                    onChange={e=>setNewOrd({...newOrd, product:e.target.value})} 
+                                />
+                            ) : (
+                                <select className="w-full p-2 border rounded-lg" value={newOrd.product} onChange={e=>setNewOrd({...newOrd, product:e.target.value})}>
+                                    <option value="">Parfüm Seç...</option>
+                                    {[...products.map(p=>p.name), ...batches.map(b=>b.name)].filter((v,i,a)=>a.indexOf(v)===i).map((n,i)=><option key={i} value={n}>{n}</option>)}
+                                </select>
+                            )}
+                            <button 
+                                onClick={()=>{
+                                    setIsManualInput(!isManualInput);
+                                    setNewOrd({...newOrd, product: ''});
+                                }}
+                                className={`px-3 rounded-lg text-xs font-bold shrink-0 transition-colors ${isManualInput ? 'bg-slate-200 text-slate-600' : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}`}
+                            >
+                                {isManualInput ? <X size={18}/> : <Plus size={18}/>}
+                            </button>
+                        </div>
+
                         <input type="number" className="w-full p-2 border rounded-lg" placeholder="Adet" value={newOrd.quantity} onChange={e=>setNewOrd({...newOrd, quantity:e.target.value})} />
                         <button onClick={handleAddOrder} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl">Kaydet</button>
                         <button onClick={()=>setIsAdd(false)} className="w-full py-2 bg-slate-100 rounded-xl">İptal</button>
@@ -629,19 +642,23 @@ export default function KallisteAppV4() {
                     let bgClass = 'bg-slate-50 border-slate-200';
                     let statusColor = 'bg-slate-100 text-slate-700';
                     let statusText = 'Bilinmiyor';
+                    let Icon = AlertCircle;
 
                     if (o.status === 'reserved') {
                         bgClass = 'bg-white border-emerald-100 shadow-sm';
                         statusColor = 'bg-emerald-100 text-emerald-700';
                         statusText = 'Rezerve';
+                        Icon = CheckCircle;
                     } else if (o.status === 'waiting') {
                         bgClass = 'bg-amber-50 border-amber-200 shadow-sm';
                         statusColor = 'bg-amber-100 text-amber-700';
                         statusText = 'Üretim Bekliyor';
+                        Icon = Clock;
                     } else if (o.status === 'needs_production') {
                         bgClass = 'bg-rose-50 border-rose-200 shadow-sm';
                         statusColor = 'bg-rose-100 text-rose-700';
-                        statusText = 'Üretim Gerekli';
+                        statusText = 'Üretim Planlanmalı';
+                        Icon = AlertTriangle;
                     }
 
                     return (
@@ -651,8 +668,8 @@ export default function KallisteAppV4() {
                                     <div className="font-bold text-slate-800">{o.customer}</div>
                                     <div className="text-sm text-slate-600">{o.product} x {o.quantity}</div>
                                 </div>
-                                <div className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${statusColor}`}>
-                                    {statusText}
+                                <div className={`text-[10px] font-bold px-2 py-1 rounded uppercase flex items-center gap-1 ${statusColor}`}>
+                                    <Icon size={12}/> {statusText}
                                 </div>
                             </div>
                             <div className="text-xs text-slate-500 italic flex items-center gap-1"><MapPin size={12}/> {o.note}</div>
