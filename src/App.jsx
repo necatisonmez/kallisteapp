@@ -910,6 +910,16 @@ export default function KallisteAppV4() {
       const expense = transactions.filter(t => t.type === 'expense').reduce((a,b)=>a+b.amount, 0);
       const profit = income - expense;
 
+      // YENİ: Silme Fonksiyonu
+      const handleDeleteTransaction = (id) => {
+          showConfirm('Bu finansal işlem kaydı silinsin mi?', () => {
+              const newTransactions = transactions.filter(t => t.id !== id);
+              setTransactions(newTransactions);
+              saveToDb('transactions', newTransactions);
+              showToast('İşlem silindi.');
+          });
+      };
+
       return (
           <div className="space-y-6 pb-24">
               <h2 className="text-2xl font-bold px-1 text-slate-800">Finans</h2>
@@ -944,13 +954,18 @@ export default function KallisteAppV4() {
                   </div>
                   <div className="space-y-3">
                       {(showAll ? transactions : transactions.slice(0, 10)).map(t => (
-                          <div key={t.id} className="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center text-sm">
+                          <div key={t.id} className="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center text-sm group">
                               <div>
                                   <div className="font-bold text-slate-700">{t.desc}</div>
                                   <div className="text-xs text-slate-400">{formatDate(t.date)}</div>
                               </div>
-                              <div className={`font-bold ${t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                  {t.type === 'income' ? '+' : '-'}{formatMoney(t.amount)}
+                              <div className="flex items-center gap-3">
+                                  <div className={`font-bold ${t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                      {t.type === 'income' ? '+' : '-'}{formatMoney(t.amount)}
+                                  </div>
+                                  <button onClick={() => handleDeleteTransaction(t.id)} className="p-1 text-slate-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100">
+                                      <Trash2 size={14} />
+                                  </button>
                               </div>
                           </div>
                       ))}
