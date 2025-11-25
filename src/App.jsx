@@ -3,7 +3,7 @@ import {
   Package, FlaskConical, Library, ShoppingBag, 
   Plus, Trash2, CheckCircle, MapPin, 
   X, Lock, AlertTriangle, TrendingUp, TrendingDown,
-  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe, Clock, PenTool
+  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe, Clock, PenTool, Edit3
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -395,11 +395,12 @@ export default function KallisteAppV4() {
         });
     };
 
-    const updatePrice = () => {
+    const handleUpdateProduct = () => {
         const newProds = products.map(p => p.id === editProd.id ? editProd : p);
         setProducts(newProds);
         saveToDb('products', newProds);
         setEditProd(null);
+        showToast('Ürün güncellendi!');
     };
 
     return (
@@ -439,7 +440,9 @@ export default function KallisteAppV4() {
                             <button onClick={()=>handleSell(p)} disabled={p.stock<=0} className="flex-1 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold disabled:opacity-50">
                                 {p.stock > 0 ? 'Satış Yap' : 'Stok Yok'}
                             </button>
-                            <button onClick={()=>setEditProd(p)} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold">Düzenle</button>
+                            <button onClick={()=>setEditProd(p)} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold flex items-center justify-center gap-1">
+                                <Edit3 size={16}/> Düzenle
+                            </button>
                         </div>
                     </div>
                 ))}
@@ -447,11 +450,45 @@ export default function KallisteAppV4() {
 
             {editProd && (
                  <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-                     <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-3">
-                        <h3 className="font-bold">Fiyat Düzenle</h3>
-                        <input className="w-full p-2 border rounded-lg" type="number" value={editProd.price} onChange={e=>setEditProd({...editProd, price:parseFloat(e.target.value)})}/>
-                        <button onClick={updatePrice} className="w-full py-2 bg-slate-900 text-white rounded-lg">Kaydet</button>
-                        <button onClick={()=>setEditProd(null)} className="w-full py-2 bg-slate-100 rounded-lg">İptal</button>
+                     <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-4 animate-in zoom-in-95">
+                        <div className="flex justify-between items-center border-b pb-2">
+                            <h3 className="font-bold text-lg">Ürün Düzenle</h3>
+                            <button onClick={()=>setEditProd(null)}><X size={20} className="text-slate-400"/></button>
+                        </div>
+                        
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase">Ürün Adı</label>
+                            <input 
+                                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1 font-medium" 
+                                value={editProd.name} 
+                                onChange={e=>setEditProd({...editProd, name:e.target.value})}
+                            />
+                        </div>
+
+                        <div className="flex gap-3">
+                            <div className="flex-1">
+                                <label className="text-xs font-bold text-slate-500 uppercase">Stok</label>
+                                <input 
+                                    type="number" 
+                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1" 
+                                    value={editProd.stock} 
+                                    onChange={e=>setEditProd({...editProd, stock:parseInt(e.target.value)})}
+                                />
+                            </div>
+                            <div className="flex-1">
+                                <label className="text-xs font-bold text-slate-500 uppercase">Fiyat (TL)</label>
+                                <input 
+                                    type="number" 
+                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1" 
+                                    value={editProd.price} 
+                                    onChange={e=>setEditProd({...editProd, price:parseFloat(e.target.value)})}
+                                />
+                            </div>
+                        </div>
+
+                        <div className="pt-2">
+                            <button onClick={handleUpdateProduct} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl shadow-lg hover:bg-slate-800">Değişiklikleri Kaydet</button>
+                        </div>
                      </div>
                  </div>
             )}
@@ -462,6 +499,7 @@ export default function KallisteAppV4() {
   // --- 5. BÖLÜM: HAMMADDELER ---
   const MaterialsView = () => {
     const [isAdd, setIsAdd] = useState(false);
+    const [editMaterial, setEditMaterial] = useState(null);
     const [form, setForm] = useState({ name: '', quantity: '', unit: 'ml', minStock: '', cost: '' });
 
     const handleSave = () => {
@@ -482,6 +520,14 @@ export default function KallisteAppV4() {
             setRawMaterials(newRaw);
             saveToDb('rawMaterials', newRaw);
         });
+    };
+
+    const handleUpdateMaterial = () => {
+        const newRaw = rawMaterials.map(r => r.id === editMaterial.id ? editMaterial : r);
+        setRawMaterials(newRaw);
+        saveToDb('rawMaterials', newRaw);
+        setEditMaterial(null);
+        showToast('Hammadde güncellendi!');
     };
 
     return (
@@ -528,11 +574,34 @@ export default function KallisteAppV4() {
                             <div className="text-right">
                                 <div className="font-bold text-lg">{m.quantity} <span className="text-xs font-normal text-slate-400">{m.unit}</span></div>
                             </div>
+                            <button onClick={()=>setEditMaterial(m)} className="p-2 text-slate-400 hover:text-indigo-600"><Edit3 size={16}/></button>
                             <button onClick={()=>handleDelete(m.id)} className="p-2 text-rose-300 hover:text-rose-600"><Trash2 size={16}/></button>
                         </div>
                     </div>
                 ))}
             </div>
+
+            {editMaterial && (
+                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-3 animate-in zoom-in-95">
+                        <div className="flex justify-between items-center border-b pb-2">
+                            <h3 className="font-bold text-lg">Hammadde Düzenle</h3>
+                            <button onClick={()=>setEditMaterial(null)}><X size={20} className="text-slate-400"/></button>
+                        </div>
+                        <input className="w-full p-2 border rounded-lg" placeholder="Adı" value={editMaterial.name} onChange={e=>setEditMaterial({...editMaterial, name:e.target.value})} />
+                        <div className="flex gap-2">
+                            <input className="flex-1 p-2 border rounded-lg" type="number" placeholder="Miktar" value={editMaterial.quantity} onChange={e=>setEditMaterial({...editMaterial, quantity:parseFloat(e.target.value)})} />
+                            <select className="p-2 border rounded-lg" value={editMaterial.unit} onChange={e=>setEditMaterial({...editMaterial, unit:e.target.value})}>
+                                <option value="ml">ml (Sıvı)</option>
+                                <option value="gr">gr (Katı)</option>
+                                <option value="adet">Adet (Şişe)</option>
+                            </select>
+                        </div>
+                        <input className="w-full p-2 border rounded-lg" type="number" placeholder="Min Stok" value={editMaterial.minStock} onChange={e=>setEditMaterial({...editMaterial, minStock:parseFloat(e.target.value)})} />
+                        <button onClick={handleUpdateMaterial} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl shadow-lg hover:bg-slate-800">Değişiklikleri Kaydet</button>
+                    </div>
+                </div>
+            )}
         </div>
     );
   };
