@@ -150,6 +150,7 @@ export default function KallisteAppV4() {
   // --- 3. BÖLÜM: ÜRETİM ---
   const ProductionView = () => {
     const [isNew, setIsNew] = useState(false);
+    const [editBatch, setEditBatch] = useState(null); // Yeni Düzenleme State'i
     const [form, setForm] = useState({ name: '', quantity: '', duration: '30', ingredients: [] });
     const [selIng, setSelIng] = useState('');
     const [selAmount, setSelAmount] = useState('');
@@ -252,6 +253,22 @@ export default function KallisteAppV4() {
         });
     };
 
+    const handleUpdateBatch = () => {
+        const newBatches = batches.map(b => b.id === editBatch.id ? editBatch : b);
+        setBatches(newBatches);
+        saveToDb('batches', newBatches);
+        setEditBatch(null);
+        showToast('Üretim güncellendi!');
+    };
+
+    const handleDeleteBatch = (id) => {
+        showConfirm('Bu üretim kaydı silinsin mi?', () => {
+            const newBatches = batches.filter(b => b.id !== id);
+            setBatches(newBatches);
+            saveToDb('batches', newBatches);
+        });
+    };
+
     return (
         <div className="space-y-4 pb-24">
              <div className="flex justify-between items-center px-1">
@@ -294,10 +311,14 @@ export default function KallisteAppV4() {
                     const isReady = daysLeft <= 0;
 
                     return (
-                        <div key={batch.id} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm relative overflow-hidden">
+                        <div key={batch.id} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm relative overflow-hidden group">
                             <div className="flex justify-between items-start mb-2 relative z-10">
                                 <div>
-                                    <div className="text-xs text-slate-400 font-bold tracking-wider mb-1">{batch.id}</div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs text-slate-400 font-bold tracking-wider">{batch.id}</span>
+                                        <button onClick={()=>setEditBatch(batch)} className="text-slate-300 hover:text-indigo-500 transition-colors"><Edit3 size={12}/></button>
+                                        <button onClick={()=>handleDeleteBatch(batch.id)} className="text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={12}/></button>
+                                    </div>
                                     <h3 className="font-bold text-lg text-slate-800">{batch.name}</h3>
                                     <div className="text-sm text-slate-500">{batch.quantity} Şişe Hedefleniyor</div>
                                 </div>
@@ -327,6 +348,35 @@ export default function KallisteAppV4() {
                     <div className="text-center text-slate-400 py-10">Aktif üretim veya hedef yok.</div>
                 )}
              </div>
+
+             {/* ÜRETİM DÜZENLEME MODALI */}
+             {editBatch && (
+                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-3 animate-in zoom-in-95">
+                        <div className="flex justify-between items-center border-b pb-2">
+                            <h3 className="font-bold text-lg">Üretim Düzenle</h3>
+                            <button onClick={()=>setEditBatch(null)}><X size={20} className="text-slate-400"/></button>
+                        </div>
+                        <div className="space-y-3">
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase">Parfüm Adı</label>
+                                <input className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1" value={editBatch.name} onChange={e=>setEditBatch({...editBatch, name:e.target.value})} />
+                            </div>
+                            <div className="flex gap-3">
+                                <div className="flex-1">
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Hedef</label>
+                                    <input type="number" className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1" value={editBatch.quantity} onChange={e=>setEditBatch({...editBatch, quantity:parseInt(e.target.value)})} />
+                                </div>
+                                <div className="flex-1">
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Süre (Gün)</label>
+                                    <input type="number" className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1" value={editBatch.duration} onChange={e=>setEditBatch({...editBatch, duration:parseInt(e.target.value)})} />
+                                </div>
+                            </div>
+                        </div>
+                        <button onClick={handleUpdateBatch} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl shadow-lg hover:bg-slate-800">Değişiklikleri Kaydet</button>
+                    </div>
+                </div>
+             )}
 
              {isNew && (
                  <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
