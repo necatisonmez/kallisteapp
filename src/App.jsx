@@ -111,7 +111,23 @@ export default function KallisteAppV4() {
             getDocRef(name), 
             (d) => {
                 if (d.exists()) {
-                    setter(d.data().items || []);
+                    let items = d.data().items || [];
+                    
+                    // --- SIRALAMA MANTIĞI ---
+                    if (['rawMaterials', 'products'].includes(name)) {
+                        // Alfabetik Sıralama (A-Z) - Türkçe karakter uyumlu
+                        items.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+                    } else if (['batches', 'orders', 'transactions'].includes(name)) {
+                        // Tarih Sıralaması (Yeniden Eskiye)
+                        items.sort((a, b) => {
+                             // date veya startDate alanına bak
+                             const dateA = new Date(a.date || a.startDate || 0);
+                             const dateB = new Date(b.date || b.startDate || 0);
+                             return dateB - dateA;
+                        });
+                    }
+
+                    setter(items);
                 } else {
                     setter([]);
                 }
@@ -150,7 +166,7 @@ export default function KallisteAppV4() {
   // --- 3. BÖLÜM: ÜRETİM ---
   const ProductionView = () => {
     const [isNew, setIsNew] = useState(false);
-    const [editBatch, setEditBatch] = useState(null); // Yeni Düzenleme State'i
+    const [editBatch, setEditBatch] = useState(null);
     const [form, setForm] = useState({ name: '', quantity: '', duration: '30', ingredients: [] });
     const [selIng, setSelIng] = useState('');
     const [selAmount, setSelAmount] = useState('');
@@ -407,6 +423,7 @@ export default function KallisteAppV4() {
                             <div className="flex gap-2 mb-3">
                                 <select className="flex-1 p-2 border rounded-lg text-sm" value={selIng} onChange={e=>setSelIng(e.target.value)}>
                                     <option value="">Malzeme Seç...</option>
+                                    {/* Hammaddeler artık Alfabetik */}
                                     {rawMaterials.map(r => <option key={r.id} value={r.id}>{r.name} ({r.quantity} {r.unit})</option>)}
                                 </select>
                                 <input className="w-20 p-2 border rounded-lg text-sm" placeholder="Miktar" value={selAmount} onChange={e=>setSelAmount(e.target.value)} />
@@ -735,7 +752,11 @@ export default function KallisteAppV4() {
                             ) : (
                                 <select className="w-full p-2 border rounded-lg" value={newOrd.product} onChange={e=>setNewOrd({...newOrd, product:e.target.value})}>
                                     <option value="">Parfüm Seç...</option>
-                                    {[...products.map(p=>p.name), ...batches.map(b=>b.name)].filter((v,i,a)=>a.indexOf(v)===i).map((n,i)=><option key={i} value={n}>{n}</option>)}
+                                    {[...products.map(p=>p.name), ...batches.map(b=>b.name)]
+                                        .filter((v,i,a)=>a.indexOf(v)===i)
+                                        .sort((a,b) => a.localeCompare(b, 'tr')) // ALFABETİK SIRALAMA EKLENDİ
+                                        .map((n,i)=><option key={i} value={n}>{n}</option>)
+                                    }
                                 </select>
                             )}
                             <button 
