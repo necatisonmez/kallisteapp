@@ -470,6 +470,15 @@ export default function KallisteAppV4() {
         showToast('Ürün güncellendi!');
     };
 
+    const handleDeleteProduct = (id) => {
+        showConfirm('Bu ürün katalogdan silinsin mi?', () => {
+            const newProds = products.filter(p => p.id !== id);
+            setProducts(newProds);
+            saveToDb('products', newProds);
+            showToast('Ürün silindi.');
+        });
+    };
+
     return (
         <div className="space-y-4 pb-24">
             <h2 className="text-2xl font-bold px-1 text-slate-800">Katalog</h2>
@@ -507,8 +516,11 @@ export default function KallisteAppV4() {
                             <button onClick={()=>handleSell(p)} disabled={p.stock<=0} className="flex-1 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold disabled:opacity-50">
                                 {p.stock > 0 ? 'Satış Yap' : 'Stok Yok'}
                             </button>
-                            <button onClick={()=>setEditProd(p)} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold flex items-center justify-center gap-1">
-                                <Edit3 size={16}/> Düzenle
+                            <button onClick={()=>setEditProd(p)} className="px-3 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold flex items-center justify-center gap-1">
+                                <Edit3 size={16}/>
+                            </button>
+                            <button onClick={()=>handleDeleteProduct(p.id)} className="px-3 py-2 bg-rose-100 text-rose-600 rounded-lg text-sm font-bold flex items-center justify-center gap-1 hover:bg-rose-200">
+                                <Trash2 size={16}/>
                             </button>
                         </div>
                     </div>
@@ -677,6 +689,7 @@ export default function KallisteAppV4() {
   const OrdersView = () => {
     const [isAdd, setIsAdd] = useState(false);
     const [isManualInput, setIsManualInput] = useState(false);
+    const [editOrder, setEditOrder] = useState(null); // SİPARİŞ DÜZENLEME İÇİN STATE
     const [newOrd, setNewOrd] = useState({ customer: '', product: '', quantity: 1 });
 
     const handleAddOrder = () => {
@@ -712,6 +725,23 @@ export default function KallisteAppV4() {
         else showToast('🚨 DİKKAT: Üretim Planlanmalı!', 'error');
 
         setIsAdd(false); setNewOrd({ customer: '', product: '', quantity: 1 }); setIsManualInput(false);
+    };
+
+    const handleUpdateOrder = () => {
+        const updatedOrders = orders.map(o => o.id === editOrder.id ? editOrder : o);
+        setOrders(updatedOrders);
+        saveToDb('orders', updatedOrders);
+        setEditOrder(null);
+        showToast('Sipariş güncellendi!');
+    };
+
+    const handleDeleteOrder = (id) => {
+        showConfirm('Bu sipariş silinsin mi?', () => {
+            const newOrders = orders.filter(o => o.id !== id);
+            setOrders(newOrders);
+            saveToDb('orders', newOrders);
+            showToast('Sipariş silindi.');
+        });
     };
 
     const handleDeliver = (order) => {
@@ -808,8 +838,14 @@ export default function KallisteAppV4() {
                                     <div className="font-bold text-slate-800">{o.customer}</div>
                                     <div className="text-sm text-slate-600">{o.product} x {o.quantity}</div>
                                 </div>
-                                <div className={`text-[10px] font-bold px-2 py-1 rounded uppercase flex items-center gap-1 ${statusColor}`}>
-                                    <Icon size={12}/> {statusText}
+                                <div className="flex flex-col items-end gap-1">
+                                    <div className={`text-[10px] font-bold px-2 py-1 rounded uppercase flex items-center gap-1 ${statusColor}`}>
+                                        <Icon size={12}/> {statusText}
+                                    </div>
+                                    <div className="flex gap-1">
+                                        <button onClick={()=>setEditOrder(o)} className="p-1 bg-white/50 rounded hover:bg-white text-slate-500"><Edit3 size={14}/></button>
+                                        <button onClick={()=>handleDeleteOrder(o.id)} className="p-1 bg-white/50 rounded hover:bg-white text-rose-500"><Trash2 size={14}/></button>
+                                    </div>
                                 </div>
                             </div>
                             <div className="text-xs text-slate-500 italic flex items-center gap-1"><MapPin size={12}/> {o.note}</div>
@@ -821,12 +857,55 @@ export default function KallisteAppV4() {
                 })}
                 {orders.length === 0 && <div className="text-center text-slate-400 py-10">Bekleyen sipariş yok.</div>}
             </div>
+
+            {/* SİPARİŞ DÜZENLEME MODALI */}
+            {editOrder && (
+                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-3 animate-in zoom-in-95">
+                        <div className="flex justify-between items-center border-b pb-2">
+                            <h3 className="font-bold text-lg">Sipariş Düzenle</h3>
+                            <button onClick={()=>setEditOrder(null)}><X size={20} className="text-slate-400"/></button>
+                        </div>
+                        
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase">Müşteri</label>
+                            <input 
+                                className="w-full p-2 border rounded-lg mt-1" 
+                                value={editOrder.customer} 
+                                onChange={e=>setEditOrder({...editOrder, customer:e.target.value})} 
+                            />
+                        </div>
+
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase">Ürün</label>
+                            <input 
+                                className="w-full p-2 border rounded-lg mt-1" 
+                                value={editOrder.product} 
+                                onChange={e=>setEditOrder({...editOrder, product:e.target.value})} 
+                            />
+                        </div>
+
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase">Adet</label>
+                            <input 
+                                type="number"
+                                className="w-full p-2 border rounded-lg mt-1" 
+                                value={editOrder.quantity} 
+                                onChange={e=>setEditOrder({...editOrder, quantity:e.target.value})} 
+                            />
+                        </div>
+
+                        <button onClick={handleUpdateOrder} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl shadow-lg hover:bg-slate-800 mt-2">Değişiklikleri Kaydet</button>
+                    </div>
+                </div>
+            )}
         </div>
     );
   };
 
   // --- 7. BÖLÜM: FİNANS ---
   const FinanceView = () => {
+      const [showAll, setShowAll] = useState(false);
       const income = transactions.filter(t => t.type === 'income').reduce((a,b)=>a+b.amount, 0);
       const expense = transactions.filter(t => t.type === 'expense').reduce((a,b)=>a+b.amount, 0);
       const profit = income - expense;
@@ -855,9 +934,16 @@ export default function KallisteAppV4() {
               </div>
 
               <div>
-                  <h3 className="text-xs font-bold text-slate-400 uppercase mb-3 px-1">Son Hareketler</h3>
+                  <div className="flex justify-between items-center mb-3 px-1">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase">Hareketler</h3>
+                      {transactions.length > 10 && (
+                          <button onClick={() => setShowAll(!showAll)} className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors">
+                              {showAll ? 'Kısalt' : 'Tümünü Göster'}
+                          </button>
+                      )}
+                  </div>
                   <div className="space-y-3">
-                      {transactions.slice(0, 10).map(t => (
+                      {(showAll ? transactions : transactions.slice(0, 10)).map(t => (
                           <div key={t.id} className="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center text-sm">
                               <div>
                                   <div className="font-bold text-slate-700">{t.desc}</div>
