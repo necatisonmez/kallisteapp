@@ -3,7 +3,7 @@ import {
   Package, FlaskConical, Library, ShoppingBag, 
   Plus, Trash2, CheckCircle, MapPin, 
   X, Lock, AlertTriangle, TrendingUp, TrendingDown,
-  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe, Clock, PenTool, Edit3
+  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe, Clock, PenTool, Edit3, Filter
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -49,6 +49,14 @@ const getDaysLeft = (start, duration) => {
     return Math.ceil(diff / (1000 * 60 * 60 * 24));
 };
 
+// --- YENİ: Kategori Rozeti Bileşeni ---
+const CategoryBadge = ({ category }) => {
+    if (category === 'male') return <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-bold border border-blue-200">M</span>;
+    if (category === 'female') return <span className="bg-pink-100 text-pink-700 px-1.5 py-0.5 rounded text-[10px] font-bold border border-pink-200">W</span>;
+    // Default Unisex
+    return <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[10px] font-bold border border-purple-200">U</span>;
+};
+
 export default function KallisteAppV4() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -90,7 +98,7 @@ export default function KallisteAppV4() {
     return () => unsubscribe();
   }, []);
 
-  // --- DATA SYNC (ORTAK VERİTABANI) ---
+  // --- DATA SYNC ---
   const getDocRef = (collectionName) => {
     return doc(db, 'artifacts', DATA_NAMESPACE, 'public', 'data', collectionName, 'items');
   };
@@ -113,14 +121,10 @@ export default function KallisteAppV4() {
                 if (d.exists()) {
                     let items = d.data().items || [];
                     
-                    // --- SIRALAMA MANTIĞI ---
                     if (['rawMaterials', 'products'].includes(name)) {
-                        // Alfabetik Sıralama (A-Z) - Türkçe karakter uyumlu
                         items.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
                     } else if (['batches', 'orders', 'transactions'].includes(name)) {
-                        // Tarih Sıralaması (Yeniden Eskiye)
                         items.sort((a, b) => {
-                             // date veya startDate alanına bak
                              const dateA = new Date(a.date || a.startDate || 0);
                              const dateB = new Date(b.date || b.startDate || 0);
                              return dateB - dateA;
@@ -155,7 +159,6 @@ export default function KallisteAppV4() {
   const showToast = (message, type='success') => { setToast({message, type}); setTimeout(()=>setToast(null), 3000); };
   const showConfirm = (message, onConfirm) => setConfirmModal({message, onConfirm});
 
-  // --- İŞLEM GEÇMİŞİ ---
   const addTransaction = (type, desc, amount) => {
       const newTrans = { id: Date.now(), type, desc, amount: parseFloat(amount), date: new Date().toISOString() };
       const updated = [newTrans, ...transactions];
@@ -167,11 +170,11 @@ export default function KallisteAppV4() {
   const ProductionView = () => {
     const [isNew, setIsNew] = useState(false);
     const [editBatch, setEditBatch] = useState(null);
-    const [form, setForm] = useState({ name: '', quantity: '', duration: '30', ingredients: [] });
+    // Yeni: category alanı eklendi (default 'unisex')
+    const [form, setForm] = useState({ name: '', quantity: '', duration: '30', ingredients: [], category: 'unisex' });
     const [selIng, setSelIng] = useState('');
     const [selAmount, setSelAmount] = useState('');
 
-    // Kritik Sipariş Analizi
     const criticalOrders = orders.filter(o => o.status === 'needs_production');
     const productionTargets = criticalOrders.reduce((acc, curr) => {
         const existing = acc.find(item => item.name === curr.product);
@@ -217,7 +220,8 @@ export default function KallisteAppV4() {
             startDate: new Date().toISOString(), 
             duration: parseInt(form.duration), 
             status: 'macerating',
-            ingredients: form.ingredients
+            ingredients: form.ingredients,
+            category: form.category || 'unisex' // Kategori bilgisini kaydet
         };
         const updatedBatches = [newBatch, ...batches];
         setBatches(updatedBatches);
@@ -239,11 +243,14 @@ export default function KallisteAppV4() {
     };
 
     const handleQuickProduce = (targetName, targetQty) => {
+        // Hızlı üretimde kategoriyi varsa mevcut ürünlerden bulmaya çalışabiliriz
+        const existingProd = products.find(p => p.name === targetName);
         setForm({ 
             name: targetName, 
             quantity: targetQty, 
             duration: '30', 
-            ingredients: [] 
+            ingredients: [],
+            category: existingProd ? existingProd.category : 'unisex'
         });
         setIsNew(true);
     };
@@ -256,7 +263,14 @@ export default function KallisteAppV4() {
             if(existingProd) {
                 newProducts = products.map(p => p.id === existingProd.id ? { ...p, stock: p.stock + batch.quantity } : p);
             } else {
-                newProducts = [...products, { id: Date.now(), name: batch.name, stock: batch.quantity, price: 0, size: '50ml' }];
+                newProducts = [...products, { 
+                    id: Date.now(), 
+                    name: batch.name, 
+                    stock: batch.quantity, 
+                    price: 0, 
+                    size: '50ml',
+                    category: batch.category || 'unisex' // Batch'teki kategoriyle yeni ürün oluştur
+                }];
             }
             
             setProducts(newProducts);
@@ -290,7 +304,7 @@ export default function KallisteAppV4() {
              <div className="flex justify-between items-center px-1">
                 <h2 className="text-2xl font-bold text-slate-800">Üretim</h2>
                 <button onClick={()=>{
-                    setForm({ name: '', quantity: '', duration: '30', ingredients: [] });
+                    setForm({ name: '', quantity: '', duration: '30', ingredients: [], category: 'unisex' });
                     setIsNew(true);
                 }} className="bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg hover:bg-slate-800 transition-all"><FlaskConical size={18}/> Yeni Parti</button>
              </div>
@@ -332,7 +346,8 @@ export default function KallisteAppV4() {
                                 <div>
                                     <div className="flex items-center gap-2">
                                         <span className="text-xs text-slate-400 font-bold tracking-wider">{batch.id}</span>
-                                        <button onClick={()=>setEditBatch(batch)} className="text-slate-300 hover:text-indigo-500 transition-colors"><Edit3 size={12}/></button>
+                                        <CategoryBadge category={batch.category} />
+                                        <button onClick={()=>setEditBatch(batch)} className="text-slate-300 hover:text-indigo-500 transition-colors ml-2"><Edit3 size={12}/></button>
                                         <button onClick={()=>handleDeleteBatch(batch.id)} className="text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={12}/></button>
                                     </div>
                                     <h3 className="font-bold text-lg text-slate-800">{batch.name}</h3>
@@ -378,6 +393,14 @@ export default function KallisteAppV4() {
                                 <label className="text-xs font-bold text-slate-500 uppercase">Parfüm Adı</label>
                                 <input className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1" value={editBatch.name} onChange={e=>setEditBatch({...editBatch, name:e.target.value})} />
                             </div>
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase">Kategori</label>
+                                <select className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1" value={editBatch.category || 'unisex'} onChange={e=>setEditBatch({...editBatch, category:e.target.value})}>
+                                    <option value="male">Erkek (M)</option>
+                                    <option value="female">Kadın (W)</option>
+                                    <option value="unisex">Unisex (U)</option>
+                                </select>
+                            </div>
                             <div className="flex gap-3">
                                 <div className="flex-1">
                                     <label className="text-xs font-bold text-slate-500 uppercase">Hedef</label>
@@ -405,6 +428,22 @@ export default function KallisteAppV4() {
                         <div>
                             <label className="text-xs font-bold text-slate-500 uppercase">Parfüm Adı</label>
                             <input className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1 font-medium" placeholder="Örn: Royal Oud" value={form.name} onChange={e=>setForm({...form, name:e.target.value})} />
+                        </div>
+
+                        {/* YENİ: KATEGORİ SEÇİMİ */}
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase">Kategori</label>
+                            <div className="flex gap-2 mt-1">
+                                {['male', 'female', 'unisex'].map(cat => (
+                                    <button 
+                                        key={cat}
+                                        onClick={() => setForm({...form, category: cat})}
+                                        className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-colors ${form.category === cat ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                                    >
+                                        {cat === 'male' ? 'ERKEK' : cat === 'female' ? 'KADIN' : 'UNISEX'}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
 
                         <div className="flex gap-3">
@@ -451,6 +490,20 @@ export default function KallisteAppV4() {
   // --- 4. BÖLÜM: KATALOG ---
   const CatalogView = () => {
     const [editProd, setEditProd] = useState(null);
+    const [filterCats, setFilterCats] = useState(['male', 'female', 'unisex']); // Varsayılan hepsi seçili
+
+    const toggleFilter = (cat) => {
+        if (filterCats.includes(cat)) {
+            // Eğer tek kalan buysa kaldırma (en az biri seçili kalsın)
+            if (filterCats.length > 1) {
+                setFilterCats(filterCats.filter(c => c !== cat));
+            }
+        } else {
+            setFilterCats([...filterCats, cat]);
+        }
+    };
+
+    const filteredProducts = products.filter(p => filterCats.includes(p.category || 'unisex'));
 
     const handleSell = (prod) => {
         showConfirm(`${prod.name} satışı yapılsın mı? Stoktan 1 düşülecek.`, () => {
@@ -481,7 +534,18 @@ export default function KallisteAppV4() {
 
     return (
         <div className="space-y-4 pb-24">
-            <h2 className="text-2xl font-bold px-1 text-slate-800">Katalog</h2>
+            
+            <div className="flex justify-between items-center px-1">
+                <h2 className="text-2xl font-bold text-slate-800">Katalog</h2>
+                {/* FİLTRE BUTONLARI */}
+                <div className="flex bg-white rounded-lg p-1 border border-slate-200">
+                    <button onClick={() => toggleFilter('male')} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${filterCats.includes('male') ? 'bg-blue-100 text-blue-700' : 'text-slate-400 hover:text-slate-600'}`}>M</button>
+                    <div className="w-px bg-slate-100 mx-1"></div>
+                    <button onClick={() => toggleFilter('female')} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${filterCats.includes('female') ? 'bg-pink-100 text-pink-700' : 'text-slate-400 hover:text-slate-600'}`}>W</button>
+                    <div className="w-px bg-slate-100 mx-1"></div>
+                    <button onClick={() => toggleFilter('unisex')} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${filterCats.includes('unisex') ? 'bg-purple-100 text-purple-700' : 'text-slate-400 hover:text-slate-600'}`}>U</button>
+                </div>
+            </div>
             
             {batches.some(b => b.status === 'macerating') && (
                 <div className="mb-4">
@@ -489,7 +553,9 @@ export default function KallisteAppV4() {
                     <div className="flex gap-3 overflow-x-auto pb-2">
                         {batches.filter(b => b.status === 'macerating').map(b => (
                             <div key={b.id} className="min-w-[140px] bg-amber-50 p-3 rounded-xl border border-amber-100 flex-shrink-0">
-                                <div className="font-bold text-slate-800 text-sm truncate">{b.name}</div>
+                                <div className="font-bold text-slate-800 text-sm truncate flex items-center gap-1">
+                                    {b.name}
+                                </div>
                                 <div className="text-xs text-amber-600 font-bold">{getDaysLeft(b.startDate, b.duration)} gün kaldı</div>
                             </div>
                         ))}
@@ -498,11 +564,14 @@ export default function KallisteAppV4() {
             )}
 
             <div className="grid gap-3">
-                {products.map(p => (
+                {filteredProducts.map(p => (
                     <div key={p.id} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-3">
                         <div className="flex justify-between items-start">
                             <div>
-                                <h3 className="font-bold text-lg text-slate-800">{p.name}</h3>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <h3 className="font-bold text-lg text-slate-800">{p.name}</h3>
+                                    <CategoryBadge category={p.category} />
+                                </div>
                                 <span className="bg-slate-100 text-slate-500 px-2 py-0.5 rounded text-xs font-bold">{p.size || '50ml'}</span>
                             </div>
                             <div className="text-right">
@@ -525,6 +594,7 @@ export default function KallisteAppV4() {
                         </div>
                     </div>
                 ))}
+                {filteredProducts.length === 0 && <div className="text-center text-slate-400 py-10">Kriterlere uygun ürün bulunamadı.</div>}
             </div>
 
             {editProd && (
@@ -542,6 +612,15 @@ export default function KallisteAppV4() {
                                 value={editProd.name} 
                                 onChange={e=>setEditProd({...editProd, name:e.target.value})}
                             />
+                        </div>
+
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase">Kategori</label>
+                            <select className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1" value={editProd.category || 'unisex'} onChange={e=>setEditProd({...editProd, category:e.target.value})}>
+                                <option value="male">Erkek (M)</option>
+                                <option value="female">Kadın (W)</option>
+                                <option value="unisex">Unisex (U)</option>
+                            </select>
                         </div>
 
                         <div className="flex gap-3">
