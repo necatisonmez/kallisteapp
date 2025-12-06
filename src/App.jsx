@@ -3,7 +3,7 @@ import {
   Package, FlaskConical, Library, ShoppingBag, 
   Plus, Trash2, CheckCircle, MapPin, 
   X, Lock, AlertTriangle, TrendingUp, TrendingDown,
-  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe, Clock, PenTool, Edit3, Filter, Search, ShoppingCart, Save
+  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe, Clock, PenTool, Edit3, Filter, Search, ShoppingCart, Save, User, ArrowLeftRight, Users, LogOut
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -18,7 +18,7 @@ import {
   doc, 
   setDoc, 
   onSnapshot,
-  getDoc
+  deleteDoc
 } from 'firebase/firestore';
 
 // --- INITIALIZATION ---
@@ -38,6 +38,11 @@ const db = getFirestore(app);
 const DATA_NAMESPACE = 'kalliste-tracker-v4';
 const APP_ACCESS_CODE = "kalliste25"; 
 
+// --- SABİTLER ---
+const EXPENSE_CATEGORIES = ['Etil Alkol', 'Şişe', 'Esans', 'Diğer Hammadde', 'Genel Gider'];
+const INCOME_CATEGORIES = ['Parfüm', 'Oda Kokusu', 'Oto Kokusu', 'Kolonya', 'Diğer Gelir'];
+const USERS = ['Abdullah', 'Barış'];
+
 // --- YARDIMCI FONKSİYONLAR ---
 const formatMoney = (amt) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(amt || 0);
 const formatDate = (d) => new Date(d).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
@@ -56,8 +61,12 @@ const CategoryBadge = ({ category }) => {
 export default function KallisteAppV4() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [isAppUnlocked, setIsAppUnlocked] = useState(false);
+  
+  // Login State
+  const [loginStep, setLoginStep] = useState(0); 
   const [accessInput, setAccessInput] = useState('');
+  const [activeUser, setActiveUser] = useState('');
+
   const [activeTab, setActiveTab] = useState('production'); 
 
   // --- STATES ---
@@ -66,6 +75,7 @@ export default function KallisteAppV4() {
   const [batches, setBatches] = useState([]);
   const [orders, setOrders] = useState([]);
   const [transactions, setTransactions] = useState([]);
+  const [debts, setDebts] = useState([]); 
   
   const [toast, setToast] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
@@ -76,8 +86,7 @@ export default function KallisteAppV4() {
       try {
         await signInAnonymously(auth);
       } catch (err) {
-        console.error("Auth init error:", err);
-        showToast("Giriş yapılamadı.", "error");
+        console.error("Auth error:", err);
       }
     };
     initAuth();
@@ -87,12 +96,38 @@ export default function KallisteAppV4() {
         setAuthLoading(false);
     });
     
-    if(sessionStorage.getItem('app_unlocked') === 'true') {
-        setIsAppUnlocked(true);
+    // Oturum kontrolü
+    const storedUser = sessionStorage.getItem('kalliste_user');
+    if(sessionStorage.getItem('app_unlocked') === 'true' && storedUser) {
+        setActiveUser(storedUser);
+        setLoginStep(2);
     }
 
     return () => unsubscribe();
   }, []);
+
+  const handleLoginPassword = (e) => {
+      e.preventDefault();
+      if(accessInput === APP_ACCESS_CODE) {
+          setLoginStep(1); 
+      } else {
+          showToast('Hatalı Şifre', 'error');
+      }
+  };
+
+  const handleUserSelect = (selectedUser) => {
+      setActiveUser(selectedUser);
+      sessionStorage.setItem('app_unlocked', 'true');
+      sessionStorage.setItem('kalliste_user', selectedUser);
+      setLoginStep(2);
+  };
+
+  const handleLogout = () => {
+      setLoginStep(0);
+      setAccessInput('');
+      setActiveUser('');
+      sessionStorage.clear();
+  };
 
   // --- DATA SYNC ---
   const getDocRef = (collectionName) => {
@@ -107,31 +142,25 @@ export default function KallisteAppV4() {
         { name: 'products', setter: setProducts },
         { name: 'batches', setter: setBatches },
         { name: 'orders', setter: setOrders },
-        { name: 'transactions', setter: setTransactions }
+        { name: 'transactions', setter: setTransactions },
+        { name: 'debts', setter: setDebts }
     ];
 
     const unsubs = collectionsToSync.map(({ name, setter }) => {
-        return onSnapshot(
-            getDocRef(name), 
-            (d) => {
-                if (d.exists()) {
-                    let items = d.data().items || [];
-                    if (['rawMaterials', 'products'].includes(name)) {
-                        items.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
-                    } else {
-                        items.sort((a, b) => {
-                             const dateA = new Date(a.date || a.startDate || 0);
-                             const dateB = new Date(b.date || b.startDate || 0);
-                             return dateB - dateA;
-                        });
-                    }
-                    setter(items);
+        return onSnapshot(getDocRef(name), (d) => {
+            if (d.exists()) {
+                let items = d.data().items || [];
+                // Sıralama
+                if (['rawMaterials', 'products'].includes(name)) {
+                    items.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
                 } else {
-                    setter([]);
+                    items.sort((a, b) => new Date(b.date || b.startDate || 0) - new Date(a.date || a.startDate || 0));
                 }
-            },
-            (error) => console.error(error)
-        );
+                setter(items);
+            } else {
+                setter([]);
+            }
+        });
     });
 
     return () => unsubs.forEach(u => u());
@@ -140,21 +169,35 @@ export default function KallisteAppV4() {
   // --- COMMON ACTIONS ---
   const saveToDb = async (collectionName, data) => {
       if(!db || !user) return;
-      try {
-          await setDoc(getDocRef(collectionName), { items: data });
-      } catch(e) { 
-          showToast("Kaydedilemedi!", "error"); 
-      }
+      try { await setDoc(getDocRef(collectionName), { items: data }); } 
+      catch(e) { showToast("Hata oluştu!", "error"); }
   };
 
   const showToast = (message, type='success') => { setToast({message, type}); setTimeout(()=>setToast(null), 3000); };
   const showConfirm = (message, onConfirm) => setConfirmModal({message, onConfirm});
 
   const addTransaction = (type, desc, amount) => {
-      const newTrans = { id: Date.now(), type, desc, amount: parseFloat(amount), date: new Date().toISOString() };
+      const newTrans = { id: Date.now(), type, desc, amount: parseFloat(amount), date: new Date().toISOString(), user: activeUser };
       const updated = [newTrans, ...transactions];
       setTransactions(updated);
       saveToDb('transactions', updated);
+  };
+
+  // --- CARI (BORÇ/ALACAK) İŞLEMLERİ ---
+  const addDebt = (type, contact, amount, desc, dueDate) => {
+      const newDebt = { 
+          id: Date.now(), 
+          type, 
+          contact, 
+          amount: parseFloat(amount), 
+          desc, 
+          dueDate,
+          date: new Date().toISOString(),
+          addedBy: activeUser
+      };
+      const updated = [newDebt, ...debts];
+      setDebts(updated);
+      saveToDb('debts', updated);
   };
 
   // --- 3. BÖLÜM: ÜRETİM ---
@@ -215,7 +258,8 @@ export default function KallisteAppV4() {
             duration: parseInt(form.duration), 
             status: 'macerating',
             ingredients: form.ingredients,
-            category: form.category || 'unisex'
+            category: form.category || 'unisex',
+            startedBy: activeUser
         };
         const updatedBatches = [newBatch, ...batches];
         setBatches(updatedBatches);
@@ -237,7 +281,6 @@ export default function KallisteAppV4() {
             }
             return order;
         });
-        
         setOrders(updatedOrders);
         saveToDb('orders', updatedOrders);
 
@@ -304,7 +347,7 @@ export default function KallisteAppV4() {
     const filteredBatches = batches.filter(b => b.status === 'macerating' && b.name.toLowerCase().includes(searchTerm.toLowerCase()));
 
     return (
-        <div className="space-y-4 pb-24">
+        <div className="space-y-4">
              <div className="flex justify-between items-center px-1">
                 <h2 className="text-2xl font-bold text-slate-800">Üretim</h2>
                 <div className="flex gap-2">
@@ -312,10 +355,7 @@ export default function KallisteAppV4() {
                         <input className="pl-8 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs w-32 focus:w-40 transition-all" placeholder="Ara..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} />
                         <Search className="absolute left-2.5 top-2.5 text-slate-400" size={14}/>
                     </div>
-                    <button onClick={()=>{
-                        setForm({ name: '', quantity: '', duration: '30', ingredients: [], category: 'unisex' });
-                        setIsNew(true);
-                    }} className="bg-slate-900 text-white px-3 rounded-xl shadow-lg hover:bg-slate-800"><Plus size={20}/></button>
+                    <button onClick={()=>{ setForm({ name: '', quantity: '', duration: '30', ingredients: [], category: 'unisex' }); setIsNew(true); }} className="bg-slate-900 text-white px-3 rounded-xl shadow-lg hover:bg-slate-800"><Plus size={20}/></button>
                 </div>
              </div>
 
@@ -344,9 +384,7 @@ export default function KallisteAppV4() {
              <div className="grid gap-3">
                 {filteredBatches.map(batch => {
                     const daysLeft = getDaysLeft(batch.startDate, batch.duration);
-                    const progress = Math.min(100, Math.max(0, 100 - (daysLeft / batch.duration * 100)));
                     const isReady = daysLeft <= 0;
-
                     return (
                         <div key={batch.id} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm relative overflow-hidden group">
                             <div className="flex justify-between items-start mb-2 relative z-10">
@@ -359,17 +397,16 @@ export default function KallisteAppV4() {
                                     </div>
                                     <h3 className="font-bold text-lg text-slate-800">{batch.name}</h3>
                                     <div className="text-sm text-slate-500">{batch.quantity} Şişe Hedefleniyor</div>
+                                    <div className="text-[10px] text-slate-400 mt-1">Başlatan: {batch.startedBy || '-'}</div>
                                 </div>
                                 <div className={`text-center p-2 rounded-xl min-w-[80px] ${isReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
                                     <div className="font-bold text-xl">{isReady ? <CheckCircle size={24} className="mx-auto"/> : daysLeft}</div>
                                     <div className="text-[10px] uppercase font-bold">{isReady ? 'HAZIR' : 'GÜN KALDI'}</div>
                                 </div>
                             </div>
-                            
                             <div className="w-full bg-slate-100 h-2 rounded-full mb-3 overflow-hidden">
-                                <div className={`h-full transition-all duration-1000 ${isReady ? 'bg-emerald-500' : 'bg-amber-400'}`} style={{width: `${progress}%`}}></div>
+                                <div className={`h-full transition-all duration-1000 ${isReady ? 'bg-emerald-500' : 'bg-amber-400'}`} style={{width: '100%'}}></div>
                             </div>
-
                             {isReady && (
                                 <button onClick={()=>handleBottle(batch)} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-slate-800 transition-colors">
                                     <Package size={18}/> Şişele ve Stoğa Ekle
@@ -378,9 +415,7 @@ export default function KallisteAppV4() {
                         </div>
                     );
                 })}
-                {filteredBatches.length === 0 && productionTargets.length === 0 && (
-                    <div className="text-center text-slate-400 py-10">Aktif üretim yok.</div>
-                )}
+                {filteredBatches.length === 0 && productionTargets.length === 0 && <div className="text-center text-slate-400 py-10">Aktif üretim yok.</div>}
              </div>
 
              {/* MODALS */}
@@ -410,32 +445,31 @@ export default function KallisteAppV4() {
                             <h3 className="font-bold text-lg">Yeni Üretim</h3>
                             <button onClick={()=>setIsNew(false)}><X size={20}/></button>
                         </div>
-                        
                         <input className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-medium" placeholder="Parfüm Adı" value={form.name} onChange={e=>setForm({...form, name:e.target.value})} />
-                        
                         <div className="flex gap-2">
                             {['male', 'female', 'unisex'].map(cat => (
-                                <button key={cat} onClick={() => setForm({...form, category: cat})} className={`flex-1 py-2 rounded-xl text-xs font-bold border ${form.category === cat ? 'bg-slate-900 text-white' : 'bg-white text-slate-500'}`}>
-                                    {cat === 'male' ? 'M' : cat === 'female' ? 'W' : 'U'}
-                                </button>
+                                <button key={cat} onClick={() => setForm({...form, category: cat})} className={`flex-1 py-2 rounded-xl text-xs font-bold border ${form.category === cat ? 'bg-slate-900 text-white' : 'bg-white text-slate-500'}`}>{cat === 'male' ? 'M' : cat === 'female' ? 'W' : 'U'}</button>
                             ))}
                         </div>
-
                         <div className="flex gap-3">
                             <input type="number" className="flex-1 p-3 bg-slate-50 border rounded-xl" placeholder="Adet" value={form.quantity} onChange={e=>setForm({...form, quantity:e.target.value})} />
                             <input type="number" className="flex-1 p-3 bg-slate-50 border rounded-xl" placeholder="Süre (Gün)" value={form.duration} onChange={e=>setForm({...form, duration:e.target.value})} />
                         </div>
-
+                        
+                        {/* Hammadde Girişi - Yukarı Taşındı */}
                         <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                            <div className="flex gap-2 mb-3">
-                                <select className="flex-1 p-2 border rounded-lg text-sm" value={selIng} onChange={e=>setSelIng(e.target.value)}>
-                                    <option value="">Malzeme...</option>
+                            <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Malzemeler</label>
+                            <div className="flex flex-col gap-2 mb-3">
+                                <select className="w-full p-2 border rounded-lg text-sm" value={selIng} onChange={e=>setSelIng(e.target.value)}>
+                                    <option value="">Malzeme Seç...</option>
                                     {rawMaterials.map(r => <option key={r.id} value={r.id}>{r.name} ({r.quantity} {r.unit})</option>)}
                                 </select>
-                                <input className="w-20 p-2 border rounded-lg text-sm" placeholder="Miktar" value={selAmount} onChange={e=>setSelAmount(e.target.value)} />
-                                <button onClick={addIngredient} className="bg-emerald-500 text-white p-2 rounded-lg"><Plus size={20}/></button>
+                                <div className="flex gap-2">
+                                    <input className="flex-1 min-w-0 p-2 border rounded-lg text-sm" placeholder="Miktar" value={selAmount} onChange={e=>setSelAmount(e.target.value)} />
+                                    <button onClick={addIngredient} className="shrink-0 bg-emerald-500 text-white p-2 rounded-lg w-12 flex items-center justify-center"><Plus size={20}/></button>
+                                </div>
                             </div>
-                            <div className="space-y-2">
+                            <div className="space-y-2 max-h-32 overflow-y-auto">
                                 {form.ingredients.map((ing, idx) => (
                                     <div key={idx} className="flex justify-between text-sm bg-white p-2 rounded border border-slate-100">
                                         <span>{ing.name}</span>
@@ -453,7 +487,7 @@ export default function KallisteAppV4() {
     );
   };
 
-  // --- 4. BÖLÜM: KATALOG ---
+  // --- 4. BÖLÜM: KATALOG (GÜNCELLENMİŞ) ---
   const CatalogView = () => {
     const [editProd, setEditProd] = useState(null);
     const [filterCats, setFilterCats] = useState(['male', 'female', 'unisex']);
@@ -467,13 +501,38 @@ export default function KallisteAppV4() {
         }
     };
 
-    const filteredProducts = products.filter(p => 
+    // MERGED DATA: Stoktaki ürünler + Sadece üretimde olanlar
+    const mergedList = [...products];
+    // Üretimdeki ama stokta olmayanları bulup ekleyelim
+    batches.filter(b => b.status === 'macerating').forEach(batch => {
+        const exists = mergedList.find(p => p.name === batch.name);
+        if (!exists) {
+            mergedList.push({
+                id: `temp-${batch.id}`,
+                name: batch.name,
+                stock: 0,
+                price: 0,
+                category: batch.category || 'unisex',
+                size: '50ml',
+                isIncoming: true,
+                incomingDetails: { days: getDaysLeft(batch.startDate, batch.duration), qty: batch.quantity }
+            });
+        } else {
+             // Zaten var, üzerine bilgi ekleyelim
+             exists.incomingDetails = { days: getDaysLeft(batch.startDate, batch.duration), qty: batch.quantity };
+        }
+    });
+
+    const filteredProducts = mergedList.filter(p => 
         filterCats.includes(p.category || 'unisex') && 
         p.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     const handleSell = (prod) => {
         showConfirm(`${prod.name} satışı yapılsın mı?`, () => {
+             // Eğer geçici ürünse (stokta yoksa) işlem yapma
+             if(prod.isIncoming) { showToast('Ürün henüz stokta yok.', 'error'); return; }
+
              const newProds = products.map(p => p.id === prod.id ? { ...p, stock: p.stock - 1 } : p);
              setProducts(newProds);
              saveToDb('products', newProds);
@@ -483,6 +542,11 @@ export default function KallisteAppV4() {
     };
 
     const handleUpdateProduct = () => {
+        // Eğer geçici ürünse kaydetmeyi engelle veya yeni ürün olarak ekle (Burada basitlik için sadece mevcutları güncelliyoruz)
+        if(editProd.isIncoming) {
+             setEditProd(null);
+             return;
+        }
         const newProds = products.map(p => p.id === editProd.id ? editProd : p);
         setProducts(newProds);
         saveToDb('products', newProds);
@@ -518,7 +582,7 @@ export default function KallisteAppV4() {
             
             <div className="grid gap-3">
                 {filteredProducts.map(p => (
-                    <div key={p.id} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-3">
+                    <div key={p.id} className={`bg-white p-4 rounded-xl border shadow-sm flex flex-col gap-3 ${p.isIncoming ? 'border-amber-200 bg-amber-50/30' : 'border-slate-100'}`}>
                         <div className="flex justify-between items-start">
                             <div>
                                 <div className="flex items-center gap-2 mb-1">
@@ -526,19 +590,30 @@ export default function KallisteAppV4() {
                                     <CategoryBadge category={p.category} />
                                 </div>
                                 <span className="bg-slate-100 text-slate-500 px-2 py-0.5 rounded text-xs font-bold">{p.size || '50ml'}</span>
+                                {p.incomingDetails && (
+                                    <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-amber-600 bg-amber-100 w-max px-1.5 py-0.5 rounded">
+                                        <Clock size={10}/> Gelecek: {p.incomingDetails.qty} adet ({p.incomingDetails.days} gün)
+                                    </div>
+                                )}
                             </div>
                             <div className="text-right">
-                                <div className={`text-sm font-bold px-2 py-1 rounded ${p.stock > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                                    {p.stock > 0 ? `${p.stock} Stok` : 'Tükendi'}
-                                </div>
+                                {p.isIncoming ? (
+                                    <div className="text-xs font-bold text-amber-500 bg-amber-100 px-2 py-1 rounded">Üretimde</div>
+                                ) : (
+                                    <div className={`text-sm font-bold px-2 py-1 rounded ${p.stock > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                                        {p.stock > 0 ? `${p.stock} Stok` : 'Tükendi'}
+                                    </div>
+                                )}
                                 <div className="font-bold text-slate-900 mt-1">{formatMoney(p.price)}</div>
                             </div>
                         </div>
-                        <div className="flex gap-2 pt-2 border-t border-slate-50">
-                            <button onClick={()=>handleSell(p)} disabled={p.stock<=0} className="flex-1 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold disabled:opacity-50">Satış Yap</button>
-                            <button onClick={()=>setEditProd(p)} className="px-3 bg-slate-100 text-slate-600 rounded-lg"><Edit3 size={16}/></button>
-                            <button onClick={()=>handleDeleteProduct(p.id)} className="px-3 bg-rose-100 text-rose-600 rounded-lg"><Trash2 size={16}/></button>
-                        </div>
+                        {!p.isIncoming && (
+                            <div className="flex gap-2 pt-2 border-t border-slate-50">
+                                <button onClick={()=>handleSell(p)} disabled={p.stock<=0} className="flex-1 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold disabled:opacity-50">Satış Yap</button>
+                                <button onClick={()=>setEditProd(p)} className="px-3 bg-slate-100 text-slate-600 rounded-lg"><Edit3 size={16}/></button>
+                                <button onClick={()=>handleDeleteProduct(p.id)} className="px-3 bg-rose-100 text-rose-600 rounded-lg"><Trash2 size={16}/></button>
+                            </div>
+                        )}
                     </div>
                 ))}
             </div>
@@ -665,12 +740,9 @@ export default function KallisteAppV4() {
             </div>
 
             {editMaterial && (
-                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
-                    <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-3 animate-in zoom-in-95">
-                        <div className="flex justify-between items-center border-b pb-2">
-                            <h3 className="font-bold text-lg">Hammadde Düzenle</h3>
-                            <button onClick={()=>setEditMaterial(null)}><X size={20} className="text-slate-400"/></button>
-                        </div>
+                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+                    <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-3">
+                        <h3 className="font-bold">Düzenle</h3>
                         <input className="w-full p-2 border rounded-lg" value={editMaterial.name} onChange={e=>setEditMaterial({...editMaterial, name:e.target.value})} />
                         <div className="flex gap-2">
                             <input className="flex-1 p-2 border rounded-lg" type="number" value={editMaterial.quantity} onChange={e=>setEditMaterial({...editMaterial, quantity:parseFloat(e.target.value)})} />
@@ -681,7 +753,10 @@ export default function KallisteAppV4() {
                             </select>
                         </div>
                         <input className="w-full p-2 border rounded-lg" type="number" placeholder="Min Stok" value={editMaterial.minStock} onChange={e=>setEditMaterial({...editMaterial, minStock:parseFloat(e.target.value)})} />
-                        <button onClick={handleUpdateMaterial} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl">Kaydet</button>
+                        <div className="flex gap-2">
+                            <button onClick={handleUpdateMaterial} className="flex-1 py-3 bg-slate-900 text-white font-bold rounded-xl">Kaydet</button>
+                            <button onClick={()=>setEditMaterial(null)} className="py-3 px-4 bg-slate-100 rounded-xl"><X/></button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -693,9 +768,8 @@ export default function KallisteAppV4() {
   const OrdersView = () => {
     const [isAdd, setIsAdd] = useState(false);
     const [isManualInput, setIsManualInput] = useState(false);
-    const [editingOrder, setEditingOrder] = useState(null); // YENİ: Sipariş Düzenleme Modu
+    const [editingOrder, setEditingOrder] = useState(null);
     
-    // YENİ: Sepet Mantığı
     const [basket, setBasket] = useState([]);
     const [customerName, setCustomerName] = useState('');
     const [newItem, setNewItem] = useState({ product: '', quantity: 1 });
@@ -706,7 +780,6 @@ export default function KallisteAppV4() {
     const openEditOrder = (order) => {
         setEditingOrder({
             ...order,
-            // Eski verilerde 'items' olmayabilir, uyumluluk sağla
             items: order.items || [{ product: order.product, quantity: order.quantity, status: order.status }]
         });
     };
@@ -714,18 +787,12 @@ export default function KallisteAppV4() {
     const saveEditedOrder = () => {
         if (!editingOrder) return;
 
-        // Stok ayarlamalarını yap (Zor ve riskli olduğu için şimdilik sadece kaydı güncelliyoruz)
-        // Gelişmiş versiyonda: Eski siparişin rezerve miktarını stoğa iade et, yeni siparişinkini düş.
-        // Şimdilik basitçe kaydı güncelleyelim.
-        
-        // Siparişteki her bir kalemin durumunu tekrar kontrol et (Belki stok durumu değişmiştir)
+        // Siparişteki her bir kalemin durumunu tekrar kontrol et
         const updatedItems = editingOrder.items.map(item => {
             const product = products.find(p => p.name === item.product);
             const activeBatch = batches.find(b => b.name === item.product && b.status === 'macerating');
             
             let status = 'needs_production';
-            // Not: Stok kontrolü yaparken mevcut stok + bu siparişin zaten tuttuğu stok hesaba katılmalı
-            // Bu karmaşık olduğu için şimdilik basit statü kontrolü yapıyoruz.
             if (product && product.stock >= parseInt(item.quantity)) status = 'reserved';
             else if (activeBatch) status = 'waiting';
             
@@ -735,7 +802,6 @@ export default function KallisteAppV4() {
         const updatedOrder = {
             ...editingOrder,
             items: updatedItems,
-            // Genel durumu güncelle
             status: updatedItems.some(i => i.status === 'needs_production') ? 'needs_production' : 
                     updatedItems.some(i => i.status === 'waiting') ? 'waiting' : 'reserved'
         };
@@ -772,11 +838,9 @@ export default function KallisteAppV4() {
         const oldQty = parseInt(newItems[index].quantity);
         const diff = parseInt(newQty) - oldQty;
         
-        // Stok yönetimi (Basitleştirilmiş)
         if (newItems[index].status === 'reserved') {
             const productIndex = products.findIndex(p => p.name === newItems[index].product);
             if (productIndex > -1) {
-                // Eğer miktar arttıysa stoktan düş, azaldıysa stoğa ekle
                 const currentStock = products[productIndex].stock;
                 if (currentStock >= diff) {
                     const newProducts = [...products];
@@ -785,7 +849,7 @@ export default function KallisteAppV4() {
                     saveToDb('products', newProducts);
                 } else {
                     showToast('Yetersiz stok!', 'error');
-                    return; // İşlemi iptal et
+                    return; 
                 }
             }
         }
@@ -794,15 +858,22 @@ export default function KallisteAppV4() {
         setEditingOrder({ ...editingOrder, items: newItems });
     };
 
-    // --- MEVCUT FONKSİYONLAR ---
     const handleAddToBasket = () => {
         if(!newItem.product) return;
         const product = products.find(p => p.name === newItem.product);
         const activeBatch = batches.find(b => b.name === newItem.product && b.status === 'macerating');
         let status = 'needs_production';
-        if (product && product.stock >= parseInt(newItem.quantity)) status = 'reserved';
-        else if (activeBatch) status = 'waiting';
-        setBasket([...basket, { ...newItem, status, id: Date.now() }]);
+        let note = '';
+        
+        if (product && product.stock >= parseInt(newItem.quantity)) {
+            status = 'reserved';
+        } else if (activeBatch) {
+            status = 'waiting';
+            const days = getDaysLeft(activeBatch.startDate, activeBatch.duration);
+            note = `Demleniyor (${days} gün)`;
+        }
+        
+        setBasket([...basket, { ...newItem, status, note, id: Date.now() }]);
         setNewItem({ product: '', quantity: 1 });
         setIsManualInput(false);
     };
@@ -814,10 +885,7 @@ export default function KallisteAppV4() {
             if(item.status === 'reserved') {
                 const prodIndex = updatedProducts.findIndex(p => p.name === item.product);
                 if(prodIndex > -1) {
-                    updatedProducts[prodIndex] = {
-                        ...updatedProducts[prodIndex],
-                        stock: updatedProducts[prodIndex].stock - parseInt(item.quantity)
-                    };
+                    updatedProducts[prodIndex] = { ...updatedProducts[prodIndex], stock: updatedProducts[prodIndex].stock - parseInt(item.quantity) };
                 }
             }
         });
@@ -832,7 +900,8 @@ export default function KallisteAppV4() {
             items: basket,
             status: mainStatus,
             date: new Date().toISOString(),
-            note: `${basket.length} kalem ürün`
+            note: `${basket.length} kalem`,
+            createdBy: activeUser
         };
         const newOrders = [newOrder, ...orders];
         setOrders(newOrders);
@@ -849,7 +918,21 @@ export default function KallisteAppV4() {
                 const prod = products.find(p => p.name === item.product);
                 if(prod) totalAmount += (prod.price * item.quantity);
             });
-            if(totalAmount > 0) addTransaction('income', `Teslimat: ${order.customer}`, totalAmount);
+            if(totalAmount > 0) {
+                const newTrans = { 
+                    id: Date.now(), 
+                    type: 'income', 
+                    category: 'Parfüm', 
+                    contact: order.customer, 
+                    desc: `Teslimat: ${order.customer}`, 
+                    amount: totalAmount, 
+                    date: new Date().toISOString(),
+                    user: activeUser 
+                };
+                const updatedTrans = [newTrans, ...transactions];
+                setTransactions(updatedTrans);
+                saveToDb('transactions', updatedTrans);
+            }
             const updatedOrders = orders.map(o => o.id === order.id ? { ...o, status: 'completed' } : o);
             setOrders(updatedOrders);
             saveToDb('orders', updatedOrders);
@@ -883,130 +966,123 @@ export default function KallisteAppV4() {
                 </div>
             </div>
 
-            {/* SİPARİŞ LİSTESİ */}
             <div className="grid gap-3">
                 {filteredOrders.map(o => (
                     <div key={o.id} className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex flex-col gap-2 relative group">
                         <div className="flex justify-between items-start">
                             <div className="font-bold text-slate-800">{o.customer}</div>
-                            {/* DÜZENLEME VE SİLME BUTONLARI */}
                             <div className="flex gap-1">
-                                <button onClick={()=>openEditOrder(o)} className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100"><Edit3 size={16}/></button>
-                                <button onClick={()=>handleDeliver(o)} className="p-1.5 bg-emerald-100 text-emerald-600 rounded-lg hover:bg-emerald-200"><CheckCircle size={16}/></button>
-                                <button onClick={()=>handleDeleteOrder(o.id)} className="p-1.5 bg-rose-100 text-rose-600 rounded-lg hover:bg-rose-200"><Trash2 size={16}/></button>
+                                <button onClick={()=>openEditOrder(o)} className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg"><Edit3 size={16}/></button>
+                                <button onClick={()=>handleDeliver(o)} className="p-1.5 bg-emerald-100 text-emerald-600 rounded-lg"><CheckCircle size={16}/></button>
+                                <button onClick={()=>handleDeleteOrder(o.id)} className="p-1.5 bg-rose-100 text-rose-600 rounded-lg"><Trash2 size={16}/></button>
                             </div>
                         </div>
-                        
                         <div className="space-y-1">
                             {(o.items || [{product:o.product, quantity:o.quantity, status:o.status}]).map((item, i) => (
-                                <div key={i} className="flex justify-between text-sm border-b border-slate-50 pb-1 last:border-0">
+                                <div key={i} className="flex justify-between text-sm border-b border-slate-50 pb-1">
                                     <span className="text-slate-600">{item.product} x{item.quantity}</span>
-                                    {item.status === 'reserved' && <span className="text-[10px] font-bold text-emerald-500 bg-emerald-50 px-1 rounded">Rezerve</span>}
+                                    {item.note && <span className="text-[10px] text-amber-600 italic ml-2">{item.note}</span>}
+                                    {item.status === 'reserved' && <span className="text-[10px] font-bold text-emerald-500 bg-emerald-50 px-1 rounded">Stokta</span>}
                                     {item.status === 'waiting' && <span className="text-[10px] font-bold text-amber-500 bg-amber-50 px-1 rounded">Bekliyor</span>}
                                     {(item.status === 'needs_production' || !item.status) && <span className="text-[10px] font-bold text-rose-500 bg-rose-50 px-1 rounded">Üretilmeli</span>}
                                 </div>
                             ))}
                         </div>
-                        <div className="text-xs text-slate-400 italic text-right">{formatDate(o.date)}</div>
+                        <div className="flex justify-between items-center text-[10px] text-slate-400 mt-1">
+                            <span>Kayıt: {o.createdBy || '-'}</span>
+                            <span>{formatDate(o.date)}</span>
+                        </div>
                     </div>
                 ))}
             </div>
 
-            {/* SİPARİŞ DÜZENLEME MODALI */}
+            {/* Yeni Sipariş Modal */}
+            {isAdd && (
+                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+                    <div className="bg-white w-full max-w-md rounded-2xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+                        <div className="flex justify-between items-center border-b pb-4">
+                            <h3 className="font-bold text-lg">Yeni Sipariş</h3>
+                            <button onClick={()=>setIsAdd(false)}><X size={20}/></button>
+                        </div>
+                        <input className="w-full p-3 border rounded-xl font-bold" placeholder="Müşteri Adı" value={customerName} onChange={e=>setCustomerName(e.target.value)} />
+                        
+                        {/* Ürün Ekleme Alanı (Yukarı Taşındı) */}
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                             <div className="flex gap-2 mb-2">
+                                {isManualInput ? (
+                                    <input 
+                                        className="flex-1 min-w-0 p-2 border rounded-lg bg-indigo-50 animate-in fade-in text-sm" 
+                                        placeholder="Özel Ürün Adı..." 
+                                        value={newItem.product} 
+                                        onChange={e=>setNewItem({...newItem, product:e.target.value})} 
+                                    />
+                                ) : (
+                                    <select className="flex-1 min-w-0 p-2 border rounded-lg text-sm max-w-[200px] sm:max-w-none" value={newItem.product} onChange={e=>setNewItem({...newItem, product:e.target.value})}>
+                                        <option value="">Ürün Seç...</option>
+                                        {products.map((p,i)=><option key={i} value={p.name}>{p.name} (Stok)</option>)}
+                                        {batches.filter(b => b.status === 'macerating').map(b => (
+                                            <option key={b.id} value={b.name} className="text-amber-600">
+                                                {b.name} (Demleniyor - {getDaysLeft(b.startDate, b.duration)} Gün)
+                                            </option>
+                                        ))}
+                                    </select>
+                                )}
+                                <button onClick={()=>setIsManualInput(!isManualInput)} className="shrink-0 p-2 bg-slate-100 rounded-lg text-slate-500">
+                                    {isManualInput ? <ShoppingCart size={18}/> : <PenTool size={18}/>}
+                                </button>
+                            </div>
+                            <div className="flex gap-2">
+                                <input type="number" className="w-20 p-2 border rounded-lg" value={newItem.quantity} onChange={e=>setNewItem({...newItem, quantity:e.target.value})} />
+                                <button onClick={handleAddToBasket} className="flex-1 bg-indigo-100 text-indigo-700 font-bold rounded-lg hover:bg-indigo-200">Sepete Ekle</button>
+                            </div>
+                        </div>
+
+                        {/* Sepet Listesi */}
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 min-h-[100px] max-h-48 overflow-y-auto">
+                            {basket.length === 0 ? <div className="text-center text-slate-400 text-sm py-4">Sepet boş</div> : basket.map((item, idx) => (
+                                <div key={item.id} className="flex justify-between items-center bg-white p-2 rounded shadow-sm text-sm mb-1">
+                                    <div className="flex flex-col">
+                                        <span>{item.product} x{item.quantity}</span>
+                                        {item.note && <span className="text-[10px] text-amber-600">{item.note}</span>}
+                                    </div>
+                                    <button onClick={()=>setBasket(basket.filter(b=>b.id!==item.id))} className="text-rose-400"><X size={14}/></button>
+                                </div>
+                            ))}
+                        </div>
+
+                        {basket.some(i => i.status === 'needs_production') && (
+                            <div className="flex items-center gap-2 text-rose-600 bg-rose-50 p-2 rounded-lg text-xs font-bold">
+                                <AlertCircle size={14}/>
+                                <span>Dikkat: Bazı ürünler için üretim gerekecek!</span>
+                            </div>
+                        )}
+                        <button onClick={handleSaveOrder} disabled={basket.length===0} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl">Tamamla</button>
+                    </div>
+                </div>
+            )}
+            
+            {/* Düzenleme Modalı */}
             {editingOrder && (
                 <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
                     <div className="bg-white w-full max-w-md rounded-2xl p-6 space-y-4 animate-in zoom-in-95">
                         <div className="flex justify-between items-center border-b pb-2">
                             <h3 className="font-bold text-lg">Siparişi Düzenle</h3>
-                            <button onClick={()=>setEditingOrder(null)}><X size={20} className="text-slate-400"/></button>
+                            <button onClick={()=>setEditingOrder(null)}><X size={20}/></button>
                         </div>
+                        <input className="w-full p-2 border rounded-lg font-bold" value={editingOrder.customer} onChange={e=>setEditingOrder({...editingOrder, customer:e.target.value})} />
                         
-                        <div>
-                            <label className="text-xs font-bold text-slate-500 uppercase">Müşteri</label>
-                            <input 
-                                className="w-full p-2 border rounded-lg mt-1 font-bold" 
-                                value={editingOrder.customer} 
-                                onChange={e=>setEditingOrder({...editingOrder, customer:e.target.value})} 
-                            />
-                        </div>
-
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                            <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Sepet İçeriği</label>
                             {editingOrder.items.map((item, idx) => (
                                 <div key={idx} className="flex justify-between items-center bg-white p-2 rounded shadow-sm mb-2 text-sm">
-                                    <span className="font-medium">{item.product}</span>
+                                    <span>{item.product}</span>
                                     <div className="flex items-center gap-2">
-                                        <input 
-                                            type="number" 
-                                            className="w-12 p-1 border rounded text-center" 
-                                            value={item.quantity}
-                                            onChange={(e) => updateOrderItemQty(idx, e.target.value)}
-                                        />
-                                        <button onClick={() => removeOrderItem(idx)} className="text-rose-400 p-1 hover:bg-rose-50 rounded">
-                                            <Trash2 size={14}/>
-                                        </button>
+                                        <input type="number" className="w-12 p-1 border rounded text-center" value={item.quantity} onChange={(e) => updateOrderItemQty(idx, e.target.value)} />
+                                        <button onClick={() => removeOrderItem(idx)} className="text-rose-400 p-1 hover:bg-rose-50 rounded"><Trash2 size={14}/></button>
                                     </div>
                                 </div>
                             ))}
-                            {editingOrder.items.length === 0 && <div className="text-center text-xs text-rose-500">Sepet boş, sipariş silinebilir.</div>}
                         </div>
-
-                        <button onClick={saveEditedOrder} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl shadow-lg">Değişiklikleri Kaydet</button>
-                    </div>
-                </div>
-            )}
-
-            {/* YENİ SİPARİŞ MODALI (ESKİSİ İLE AYNI) */}
-            {isAdd && (
-                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-                    <div className="bg-white w-full max-w-md rounded-2xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
-                        <div className="flex justify-between items-center border-b pb-4">
-                            <h3 className="font-bold text-lg">Yeni Sipariş Oluştur</h3>
-                            <button onClick={()=>setIsAdd(false)}><X size={20}/></button>
-                        </div>
-                        
-                        <input className="w-full p-3 border rounded-xl font-bold" placeholder="Müşteri Adı" value={customerName} onChange={e=>setCustomerName(e.target.value)} />
-                        
-                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 min-h-[100px]">
-                            {basket.length === 0 ? <div className="text-center text-slate-400 text-sm py-4">Sepet boş</div> : (
-                                <div className="space-y-2">
-                                    {basket.map((item, idx) => (
-                                        <div key={item.id} className="flex justify-between items-center bg-white p-2 rounded shadow-sm text-sm">
-                                            <span>{item.product} <span className="text-slate-400">x{item.quantity}</span></span>
-                                            <div className="flex items-center gap-2">
-                                                {item.status === 'reserved' ? <span className="text-[10px] bg-emerald-100 text-emerald-600 px-1 rounded">Stokta</span> : <span className="text-[10px] bg-rose-100 text-rose-600 px-1 rounded">Yok</span>}
-                                                <button onClick={()=>setBasket(basket.filter(b=>b.id!==item.id))} className="text-rose-400"><X size={14}/></button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="flex gap-2">
-                            {isManualInput ? (
-                                <input 
-                                    className="flex-1 p-2 border rounded-lg bg-indigo-50 animate-in fade-in" 
-                                    placeholder="Özel Ürün Adı..." 
-                                    value={newItem.product} 
-                                    onChange={e=>setNewItem({...newItem, product:e.target.value})} 
-                                />
-                            ) : (
-                                <select className="flex-1 p-2 border rounded-lg text-sm" value={newItem.product} onChange={e=>setNewItem({...newItem, product:e.target.value})}>
-                                    <option value="">Ürün Seç...</option>
-                                    {products.map((p,i)=><option key={i} value={p.name}>{p.name}</option>)}
-                                </select>
-                            )}
-                            <button onClick={()=>setIsManualInput(!isManualInput)} className="p-2 bg-slate-100 rounded-lg text-slate-500">
-                                {isManualInput ? <ShoppingCart size={18}/> : <PenTool size={18}/>}
-                            </button>
-                        </div>
-                        <div className="flex gap-2">
-                            <input type="number" className="w-20 p-2 border rounded-lg" value={newItem.quantity} onChange={e=>setNewItem({...newItem, quantity:e.target.value})} />
-                            <button onClick={handleAddToBasket} className="flex-1 bg-indigo-100 text-indigo-700 font-bold rounded-lg hover:bg-indigo-200">Sepete Ekle</button>
-                        </div>
-
-                        <button onClick={handleSaveOrder} disabled={basket.length===0} className="w-full py-4 bg-slate-900 text-white font-bold rounded-xl shadow-lg disabled:opacity-50">Siparişi Tamamla</button>
+                        <button onClick={saveEditedOrder} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl">Kaydet</button>
                     </div>
                 </div>
             )}
@@ -1016,43 +1092,64 @@ export default function KallisteAppV4() {
 
   // --- 7. BÖLÜM: FİNANS ---
   const FinanceView = () => {
+      const [type, setType] = useState('income');
+      const [isAdd, setIsAdd] = useState(false);
+      const [editTrans, setEditTrans] = useState(null);
+      const [form, setForm] = useState({ category: '', contact: '', desc: '', amount: '' });
       const [showAll, setShowAll] = useState(false);
+
       const income = transactions.filter(t => t.type === 'income').reduce((a,b)=>a+b.amount, 0);
       const expense = transactions.filter(t => t.type === 'expense').reduce((a,b)=>a+b.amount, 0);
-      const profit = income - expense;
 
-      const handleDeleteTransaction = (id) => {
+      const handleSave = () => {
+          const newTrans = { 
+              id: Date.now(), 
+              type, 
+              ...form, 
+              amount: parseFloat(form.amount), 
+              date: new Date().toISOString(), 
+              user: activeUser 
+          };
+          const updated = [newTrans, ...transactions];
+          setTransactions(updated);
+          saveToDb('transactions', updated);
+          setIsAdd(false); setForm({ category: '', contact: '', desc: '', amount: '' });
+      };
+
+      const handleUpdate = () => {
+          const updated = transactions.map(t => t.id === editTrans.id ? { ...editTrans, amount: parseFloat(editTrans.amount) } : t);
+          setTransactions(updated);
+          saveToDb('transactions', updated);
+          setEditTrans(null);
+      };
+
+      const handleDelete = (id) => {
           showConfirm('Silinsin mi?', () => {
-              const newTransactions = transactions.filter(t => t.id !== id);
-              setTransactions(newTransactions);
-              saveToDb('transactions', newTransactions);
+              const updated = transactions.filter(t => t.id !== id);
+              setTransactions(updated);
+              saveToDb('transactions', updated);
           });
       };
 
       return (
           <div className="space-y-6 pb-24">
-              <h2 className="text-2xl font-bold px-1 text-slate-800">Finans</h2>
-              
-              <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-emerald-500 text-white p-5 rounded-2xl shadow-lg shadow-emerald-200">
-                      <div className="flex items-center gap-2 mb-1 opacity-80"><TrendingUp size={16}/><span className="text-xs font-bold uppercase">Gelir</span></div>
+              <div className="grid grid-cols-2 gap-4 px-1">
+                  <div className="bg-emerald-500 text-white p-5 rounded-2xl shadow-lg">
+                      <div className="text-xs font-bold uppercase opacity-80">Gelir</div>
                       <div className="text-2xl font-bold">{formatMoney(income)}</div>
                   </div>
-                  <div className="bg-rose-500 text-white p-5 rounded-2xl shadow-lg shadow-rose-200">
-                      <div className="flex items-center gap-2 mb-1 opacity-80"><TrendingDown size={16}/><span className="text-xs font-bold uppercase">Gider</span></div>
+                  <div className="bg-rose-500 text-white p-5 rounded-2xl shadow-lg">
+                      <div className="text-xs font-bold uppercase opacity-80">Gider</div>
                       <div className="text-2xl font-bold">{formatMoney(expense)}</div>
                   </div>
               </div>
-              
-              <div className="bg-slate-900 text-white p-6 rounded-2xl shadow-xl flex justify-between items-center">
-                  <div>
-                      <div className="text-xs text-slate-400 font-bold uppercase mb-1">Net Kâr</div>
-                      <div className={`text-3xl font-bold ${profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatMoney(profit)}</div>
-                  </div>
-                  <div className="p-3 bg-white/10 rounded-full"><Wallet size={32}/></div>
+
+              <div className="flex gap-2 px-1">
+                  <button onClick={() => { setType('income'); setIsAdd(true); }} className="flex-1 py-3 bg-emerald-100 text-emerald-700 font-bold rounded-xl flex items-center justify-center gap-2"><Plus size={18}/> Gelir Ekle</button>
+                  <button onClick={() => { setType('expense'); setIsAdd(true); }} className="flex-1 py-3 bg-rose-100 text-rose-700 font-bold rounded-xl flex items-center justify-center gap-2"><Plus size={18}/> Gider Ekle</button>
               </div>
 
-              <div>
+              <div className="space-y-3 px-1">
                   <div className="flex justify-between items-center mb-3 px-1">
                       <h3 className="text-xs font-bold text-slate-400 uppercase">Hareketler</h3>
                       {transactions.length > 10 && (
@@ -1061,79 +1158,249 @@ export default function KallisteAppV4() {
                           </button>
                       )}
                   </div>
-                  <div className="space-y-3">
-                      {(showAll ? transactions : transactions.slice(0, 10)).map(t => (
-                          <div key={t.id} className="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center text-sm group">
-                              <div>
-                                  <div className="font-bold text-slate-700">{t.desc}</div>
-                                  <div className="text-xs text-slate-400">{formatDate(t.date)}</div>
+                  {(showAll ? transactions : transactions.slice(0, 20)).map(t => (
+                      <div key={t.id} className="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center text-sm shadow-sm group">
+                          <div>
+                              <div className="font-bold text-slate-700">{t.category} <span className="font-normal text-slate-400">- {t.contact}</span></div>
+                              <div className="text-xs text-slate-400">{t.desc}</div>
+                              <div className="text-[10px] text-slate-300 mt-0.5">{formatDate(t.date)} - {t.user}</div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                              <div className={`font-bold ${t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                  {t.type === 'income' ? '+' : '-'}{formatMoney(t.amount)}
                               </div>
-                              <div className="flex items-center gap-3">
-                                  <div className={`font-bold ${t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                      {t.type === 'income' ? '+' : '-'}{formatMoney(t.amount)}
-                                  </div>
-                                  <button onClick={() => handleDeleteTransaction(t.id)} className="p-1 text-slate-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100">
-                                      <Trash2 size={14} />
-                                  </button>
+                              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button onClick={()=>setEditTrans(t)} className="text-slate-400"><Edit3 size={14}/></button>
+                                  <button onClick={()=>handleDelete(t.id)} className="text-rose-400"><Trash2 size={14}/></button>
                               </div>
                           </div>
-                      ))}
-                  </div>
+                      </div>
+                  ))}
               </div>
+
+              {(isAdd || editTrans) && (
+                  <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+                      <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-3">
+                          <div className="flex justify-between items-center border-b pb-2">
+                              <h3 className="font-bold text-lg">{editTrans ? 'Düzenle' : (type === 'income' ? 'Gelir Ekle' : 'Gider Ekle')}</h3>
+                              <button onClick={()=>{setIsAdd(false); setEditTrans(null);}}><X/></button>
+                          </div>
+                          {(editTrans ? editTrans : form).category !== undefined && (
+                              <>
+                                  <select 
+                                      className="w-full p-3 bg-slate-50 border rounded-xl"
+                                      value={editTrans ? editTrans.category : form.category}
+                                      onChange={e => editTrans ? setEditTrans({...editTrans, category:e.target.value}) : setForm({...form, category:e.target.value})}
+                                  >
+                                      <option value="">Kategori Seçiniz</option>
+                                      {(editTrans ? (editTrans.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES) : (type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES)).map(c => <option key={c} value={c}>{c}</option>)}
+                                  </select>
+                                  <input 
+                                      className="w-full p-3 bg-slate-50 border rounded-xl" 
+                                      placeholder={type === 'income' ? "Kime Satıldı?" : "Kimden Alındı?"}
+                                      value={editTrans ? editTrans.contact : form.contact}
+                                      onChange={e => editTrans ? setEditTrans({...editTrans, contact:e.target.value}) : setForm({...form, contact:e.target.value})}
+                                  />
+                                  <input 
+                                      className="w-full p-3 bg-slate-50 border rounded-xl" 
+                                      placeholder="Açıklama"
+                                      value={editTrans ? editTrans.desc : form.desc}
+                                      onChange={e => editTrans ? setEditTrans({...editTrans, desc:e.target.value}) : setForm({...form, desc:e.target.value})}
+                                  />
+                                  <input 
+                                      type="number"
+                                      className="w-full p-3 bg-slate-50 border rounded-xl font-bold" 
+                                      placeholder="Tutar (TL)"
+                                      value={editTrans ? editTrans.amount : form.amount}
+                                      onChange={e => editTrans ? setEditTrans({...editTrans, amount:e.target.value}) : setForm({...form, amount:e.target.value})}
+                                  />
+                                  <button 
+                                      onClick={editTrans ? handleUpdate : handleSave} 
+                                      className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl"
+                                  >
+                                      Kaydet
+                                  </button>
+                              </>
+                          )}
+                      </div>
+                  </div>
+              )}
           </div>
       );
   };
 
-  if (!isAppUnlocked) {
+  // --- YENİ: CARİ (BORÇ/ALACAK) BÖLÜMÜ ---
+  const DebtView = () => {
+      const [isAdd, setIsAdd] = useState(false);
+      const [form, setForm] = useState({ type: 'receivable', contact: '', amount: '', desc: '' });
+
+      const handleSave = () => {
+          addDebt(form.type, form.contact, form.amount, form.desc);
+          setIsAdd(false); setForm({ type: 'receivable', contact: '', amount: '', desc: '' });
+      };
+
+      const handleSettle = (debt) => {
+          showConfirm('Bu hesap kapatılıp kasaya işlensin mi?', () => {
+              const transType = debt.type === 'receivable' ? 'income' : 'expense';
+              const newTrans = { 
+                  id: Date.now(), 
+                  type: transType, 
+                  category: 'Cari Tahsilat/Ödeme', 
+                  contact: debt.contact, 
+                  desc: `Cari Kapanış: ${debt.desc}`, 
+                  amount: debt.amount, 
+                  date: new Date().toISOString(), 
+                  user: activeUser 
+              };
+              const updatedTrans = [newTrans, ...transactions];
+              setTransactions(updatedTrans);
+              saveToDb('transactions', updatedTrans);
+
+              const updatedDebts = debts.filter(d => d.id !== debt.id);
+              setDebts(updatedDebts);
+              saveToDb('debts', updatedDebts);
+              showToast('Hesap kapatıldı ve kasaya işlendi.');
+          });
+      };
+
+      const handleDelete = (id) => {
+          showConfirm('Sadece listeden silinsin mi? (Kasaya işlemez)', () => {
+              const updatedDebts = debts.filter(d => d.id !== id);
+              setDebts(updatedDebts);
+              saveToDb('debts', updatedDebts);
+          });
+      };
+
+      return (
+          <div className="space-y-4 pb-24">
+              <div className="flex justify-between items-center px-1">
+                  <h2 className="text-2xl font-bold text-slate-800">Cari Hesaplar</h2>
+                  <button onClick={() => setIsAdd(true)} className="bg-slate-900 text-white px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-2"><Plus size={18}/> Yeni Kayıt</button>
+              </div>
+
+              <div className="grid gap-3">
+                  {debts.map(d => (
+                      <div key={d.id} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex justify-between items-center">
+                          <div>
+                              <div className="flex items-center gap-2">
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${d.type === 'receivable' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                                      {d.type === 'receivable' ? 'Alacak' : 'Verecek'}
+                                  </span>
+                                  <span className="font-bold text-slate-800">{d.contact}</span>
+                              </div>
+                              <div className="text-sm text-slate-500 mt-1">{d.desc}</div>
+                              <div className="text-[10px] text-slate-300 mt-1">{formatDate(d.date)} - {d.addedBy}</div>
+                          </div>
+                          <div className="flex flex-col items-end gap-2">
+                              <span className="font-bold text-lg">{formatMoney(d.amount)}</span>
+                              <div className="flex gap-2">
+                                  <button onClick={() => handleSettle(d)} className="bg-slate-900 text-white px-3 py-1 rounded-lg text-xs font-bold">Tamamla</button>
+                                  <button onClick={() => handleDelete(d.id)} className="text-rose-300 p-1"><Trash2 size={16}/></button>
+                              </div>
+                          </div>
+                      </div>
+                  ))}
+                  {debts.length === 0 && <div className="text-center text-slate-400 py-10">Kayıtlı borç/alacak yok.</div>}
+              </div>
+
+              {isAdd && (
+                  <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+                      <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-3">
+                          <div className="flex justify-between items-center border-b pb-2">
+                              <h3 className="font-bold text-lg">Cari Ekle</h3>
+                              <button onClick={() => setIsAdd(false)}><X/></button>
+                          </div>
+                          <div className="flex bg-slate-100 p-1 rounded-xl">
+                              <button onClick={() => setForm({...form, type: 'receivable'})} className={`flex-1 py-2 rounded-lg text-sm font-bold ${form.type === 'receivable' ? 'bg-white shadow text-emerald-600' : 'text-slate-500'}`}>Alacak</button>
+                              <button onClick={() => setForm({...form, type: 'payable'})} className={`flex-1 py-2 rounded-lg text-sm font-bold ${form.type === 'payable' ? 'bg-white shadow text-rose-600' : 'text-slate-500'}`}>Verecek</button>
+                          </div>
+                          <input className="w-full p-3 bg-slate-50 border rounded-xl" placeholder="Kişi/Firma Adı" value={form.contact} onChange={e=>setForm({...form, contact:e.target.value})} />
+                          <input className="w-full p-3 bg-slate-50 border rounded-xl" placeholder="Açıklama" value={form.desc} onChange={e=>setForm({...form, desc:e.target.value})} />
+                          <input type="number" className="w-full p-3 bg-slate-50 border rounded-xl font-bold" placeholder="Tutar" value={form.amount} onChange={e=>setForm({...form, amount:e.target.value})} />
+                          <button onClick={handleSave} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl">Kaydet</button>
+                      </div>
+                  </div>
+              )}
+          </div>
+      );
+  };
+
+  // --- ANA RENDER ---
+  if (loginStep < 2) {
       return (
           <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-6">
               <div className="bg-white p-8 rounded-3xl w-full max-w-sm shadow-2xl text-center">
                   <div className="bg-amber-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"><Lock className="text-amber-600" size={40} /></div>
                   <h1 className="text-3xl font-serif font-bold text-slate-900 mb-2">Kalliste</h1>
-                  <p className="text-sm text-slate-500 mb-8 tracking-widest uppercase font-bold">Yönetim Paneli</p>
-                  <form onSubmit={(e)=>{e.preventDefault(); if(accessInput===APP_ACCESS_CODE){setIsAppUnlocked(true); sessionStorage.setItem('app_unlocked','true');}else{showToast('Hatalı Şifre','error');}}}>
-                      <input type="password" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-center text-2xl tracking-[0.5em] font-bold mb-4 outline-none focus:ring-4 focus:ring-amber-100 transition-all" placeholder="••••" value={accessInput} onChange={(e) => setAccessInput(e.target.value)} />
-                      <button type="submit" className="w-full py-4 bg-slate-900 text-white font-bold rounded-xl shadow-lg hover:bg-slate-800 transition-transform active:scale-95">GİRİŞ</button>
-                  </form>
+                  
+                  {loginStep === 0 ? (
+                      <form onSubmit={handleLoginPassword}>
+                          <p className="text-sm text-slate-500 mb-6 font-bold uppercase tracking-widest">Yönetim Girişi</p>
+                          <input type="password" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-center text-2xl tracking-[0.5em] font-bold mb-4 outline-none focus:ring-4 focus:ring-amber-100 transition-all" placeholder="••••" value={accessInput} onChange={(e) => setAccessInput(e.target.value)} autoFocus />
+                          <button type="submit" className="w-full py-4 bg-slate-900 text-white font-bold rounded-xl shadow-lg hover:bg-slate-800 transition-transform active:scale-95">DEVAM ET</button>
+                      </form>
+                  ) : (
+                      <div className="animate-in fade-in slide-in-from-right">
+                          <p className="text-sm text-slate-500 mb-6 font-bold uppercase tracking-widest">Kimsin?</p>
+                          <div className="space-y-3">
+                              {USERS.map(u => (
+                                  <button key={u} onClick={() => handleUserSelect(u)} className="w-full py-4 bg-slate-50 border border-slate-200 rounded-xl text-lg font-bold text-slate-700 hover:bg-slate-100 hover:border-slate-300 transition-all flex items-center justify-center gap-3">
+                                      <User size={20}/> {u}
+                                  </button>
+                              ))}
+                          </div>
+                          <button onClick={() => setLoginStep(0)} className="mt-6 text-sm text-slate-400 underline">Geri Dön</button>
+                      </div>
+                  )}
               </div>
           </div>
       );
   }
 
-  if (authLoading) {
-      return (
-          <div className="h-screen bg-slate-50 flex items-center justify-center">
-              <Loader2 className="animate-spin text-slate-400" size={32}/>
-          </div>
-      );
-  }
+  if (authLoading) return <div className="h-screen bg-slate-50 flex items-center justify-center"><Loader2 className="animate-spin text-slate-400" size={32}/></div>;
 
   return (
     <div className="flex flex-col h-screen bg-slate-50 font-sans text-slate-900 relative">
       {toast && (<div className={`fixed top-6 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-2xl z-[60] text-white font-bold text-sm flex items-center gap-2 animate-in slide-in-from-top-5 ${toast.type==='error'?'bg-rose-600': (toast.type==='warning'?'bg-amber-500':'bg-emerald-600')}`}><span>{toast.type==='error'?<AlertTriangle size={16}/>:<CheckCircle size={16}/>}</span> {toast.message}</div>)}
       {confirmModal && (<div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6"><div className="bg-white w-full max-w-sm p-6 rounded-2xl text-center shadow-2xl animate-in zoom-in-95"><div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-600"><AlertTriangle/></div><h3 className="font-bold text-lg mb-2 text-slate-800">Emin misiniz?</h3><p className="text-sm text-slate-500 mb-6">{confirmModal.message}</p><div className="flex gap-3"><button onClick={()=>setConfirmModal(null)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl">Vazgeç</button><button onClick={()=>{confirmModal.onConfirm(); setConfirmModal(null)}} className="flex-1 py-3 bg-slate-900 text-white font-bold rounded-xl">Onayla</button></div></div></div>)}
       
-      <div className="h-safe-top bg-white w-full"></div>
-      
-      <div className="absolute top-4 left-4 z-50 flex items-center gap-1.5 bg-emerald-100 text-emerald-800 px-3 py-1.5 rounded-full text-[10px] font-bold shadow-sm border border-emerald-200">
-        <Globe size={12}/> <span>CANLI: ORTAK VERİ</span>
-      </div>
+      <header className="fixed top-0 w-full h-14 bg-white border-b border-slate-200 z-40 flex items-center justify-between px-4 shadow-sm">
+        <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-700">
+                <User size={16} />
+            </div>
+            <div className="flex flex-col">
+                <span className="text-xs font-bold text-slate-700">{activeUser}</span>
+                <span className="text-[9px] text-slate-400">Yönetici</span>
+            </div>
+        </div>
+        
+        <div className="flex items-center gap-2">
+             <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-lg border border-emerald-100">
+                <Globe size={12} className="animate-pulse"/>
+                <span className="text-[10px] font-bold">Canlı</span>
+             </div>
+             <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-rose-500"><LogOut size={16}/></button>
+        </div>
+      </header>
 
-      <main className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+      <main className="flex-1 overflow-y-auto p-4 pt-20 pb-24 custom-scrollbar">
           {activeTab === 'production' && <ProductionView />}
           {activeTab === 'catalog' && <CatalogView />}
           {activeTab === 'materials' && <MaterialsView />}
           {activeTab === 'orders' && <OrdersView />}
+          {activeTab === 'debts' && <DebtView />}
           {activeTab === 'finance' && <FinanceView />}
       </main>
       
       <div className="fixed bottom-0 w-full bg-white/95 backdrop-blur-xl border-t border-slate-200 pb-safe-bottom z-40 shadow-[0_-5px_20px_rgba(0,0,0,0.03)]">
-          <div className="flex justify-around items-center h-20 px-2">
+          <div className="grid grid-cols-6 h-16 px-1">
               <NavBtn id="production" icon={FlaskConical} label="Üretim" active={activeTab} set={setActiveTab} />
               <NavBtn id="catalog" icon={Library} label="Katalog" active={activeTab} set={setActiveTab} />
-              <NavBtn id="materials" icon={Droplets} label="Hammadde" active={activeTab} set={setActiveTab} />
+              <NavBtn id="materials" icon={Droplets} label="Stok" active={activeTab} set={setActiveTab} />
               <NavBtn id="orders" icon={ShoppingBag} label="Sipariş" active={activeTab} set={setActiveTab} />
-              <NavBtn id="finance" icon={Wallet} label="Finans" active={activeTab} set={setActiveTab} />
+              <NavBtn id="debts" icon={ArrowLeftRight} label="Cari" active={activeTab} set={setActiveTab} />
+              <NavBtn id="finance" icon={Wallet} label="Kasa" active={activeTab} set={setActiveTab} />
           </div>
       </div>
     </div>
@@ -1141,8 +1408,9 @@ export default function KallisteAppV4() {
 }
 
 const NavBtn = ({ id, icon: Icon, label, active, set }) => (
-    <button onClick={() => set(id)} className={`flex flex-col items-center gap-1.5 p-2 rounded-2xl transition-all duration-300 w-16 ${active === id ? 'text-slate-900 bg-slate-100 -translate-y-2 shadow-lg ring-1 ring-slate-200' : 'text-slate-400 hover:text-slate-600'}`}>
-        <Icon size={22} strokeWidth={active === id ? 2.5 : 2} className="transition-transform duration-300" />
+    <button onClick={() => set(id)} className={`flex flex-col items-center justify-center gap-1 h-full w-full transition-all duration-300 ${active === id ? 'text-slate-900 -translate-y-1' : 'text-slate-400 hover:text-slate-600'}`}>
+        <Icon size={20} strokeWidth={active === id ? 2.5 : 2} className="transition-transform duration-300" />
         <span className="text-[9px] font-bold tracking-wide">{label}</span>
+        {active === id && <div className="w-1 h-1 bg-slate-900 rounded-full mt-0.5"></div>}
     </button>
 );
