@@ -1097,9 +1097,18 @@ export default function KallisteAppV4() {
       const [editTrans, setEditTrans] = useState(null);
       const [form, setForm] = useState({ category: '', contact: '', desc: '', amount: '' });
       const [showAll, setShowAll] = useState(false);
+      const [filterUser, setFilterUser] = useState('All'); 
 
       const income = transactions.filter(t => t.type === 'income').reduce((a,b)=>a+b.amount, 0);
       const expense = transactions.filter(t => t.type === 'expense').reduce((a,b)=>a+b.amount, 0);
+
+      // User Stats
+      const userStats = USERS.map(u => {
+          const userTrans = transactions.filter(t => t.user === u);
+          const uIncome = userTrans.filter(t => t.type === 'income').reduce((a,b)=>a+b.amount, 0);
+          const uExpense = userTrans.filter(t => t.type === 'expense').reduce((a,b)=>a+b.amount, 0);
+          return { name: u, income: uIncome, expense: uExpense };
+      });
 
       const handleSave = () => {
           const newTrans = { 
@@ -1131,51 +1140,79 @@ export default function KallisteAppV4() {
           });
       };
 
+      const filteredTransactions = transactions.filter(t => filterUser === 'All' || t.user === filterUser);
+
       return (
           <div className="space-y-6 pb-24">
+              {/* ANA ÖZET */}
               <div className="grid grid-cols-2 gap-4 px-1">
-                  <div className="bg-emerald-500 text-white p-5 rounded-2xl shadow-lg">
-                      <div className="text-xs font-bold uppercase opacity-80">Gelir</div>
-                      <div className="text-2xl font-bold">{formatMoney(income)}</div>
+                  <div className="bg-emerald-500 text-white p-4 rounded-2xl shadow-lg">
+                      <div className="text-xs font-bold uppercase opacity-80">Toplam Gelir</div>
+                      <div className="text-xl font-bold">{formatMoney(income)}</div>
                   </div>
-                  <div className="bg-rose-500 text-white p-5 rounded-2xl shadow-lg">
-                      <div className="text-xs font-bold uppercase opacity-80">Gider</div>
-                      <div className="text-2xl font-bold">{formatMoney(expense)}</div>
+                  <div className="bg-rose-500 text-white p-4 rounded-2xl shadow-lg">
+                      <div className="text-xs font-bold uppercase opacity-80">Toplam Gider</div>
+                      <div className="text-xl font-bold">{formatMoney(expense)}</div>
                   </div>
               </div>
 
+              {/* KULLANICI BAZLI RAPOR */}
+              <div className="px-1">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase mb-2">Kullanıcı Raporları</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                      {userStats.map(u => (
+                          <div key={u.name} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm text-center">
+                              <div className="font-bold text-slate-800 mb-1">{u.name}</div>
+                              <div className="text-[10px] text-emerald-600 font-bold">+{formatMoney(u.income)}</div>
+                              <div className="text-[10px] text-rose-600 font-bold">-{formatMoney(u.expense)}</div>
+                          </div>
+                      ))}
+                  </div>
+              </div>
+
+              {/* BUTONLAR */}
               <div className="flex gap-2 px-1">
                   <button onClick={() => { setType('income'); setIsAdd(true); }} className="flex-1 py-3 bg-emerald-100 text-emerald-700 font-bold rounded-xl flex items-center justify-center gap-2"><Plus size={18}/> Gelir Ekle</button>
                   <button onClick={() => { setType('expense'); setIsAdd(true); }} className="flex-1 py-3 bg-rose-100 text-rose-700 font-bold rounded-xl flex items-center justify-center gap-2"><Plus size={18}/> Gider Ekle</button>
               </div>
 
+              {/* LİSTE */}
               <div className="space-y-3 px-1">
-                  <div className="flex justify-between items-center mb-3 px-1">
+                  <div className="flex justify-between items-center mb-3">
                       <h3 className="text-xs font-bold text-slate-400 uppercase">Hareketler</h3>
-                      {transactions.length > 10 && (
-                          <button onClick={() => setShowAll(!showAll)} className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors">
-                              {showAll ? 'Kısalt' : 'Tümünü Göster'}
-                          </button>
-                      )}
+                      <div className="flex bg-slate-100 rounded-lg p-0.5">
+                          <button onClick={() => setFilterUser('All')} className={`px-2 py-0.5 rounded text-[10px] font-bold ${filterUser === 'All' ? 'bg-white shadow' : 'text-slate-400'}`}>Tümü</button>
+                          {USERS.map(u => (
+                              <button key={u} onClick={() => setFilterUser(u)} className={`px-2 py-0.5 rounded text-[10px] font-bold ${filterUser === u ? 'bg-white shadow' : 'text-slate-400'}`}>{u}</button>
+                          ))}
+                      </div>
                   </div>
-                  {(showAll ? transactions : transactions.slice(0, 20)).map(t => (
-                      <div key={t.id} className="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center text-sm shadow-sm group">
+                  {(showAll ? filteredTransactions : filteredTransactions.slice(0, 20)).map(t => (
+                      <div key={t.id} className="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center text-sm shadow-sm group relative">
                           <div>
-                              <div className="font-bold text-slate-700">{t.category} <span className="font-normal text-slate-400">- {t.contact}</span></div>
-                              <div className="text-xs text-slate-400">{t.desc}</div>
-                              <div className="text-[10px] text-slate-300 mt-0.5">{formatDate(t.date)} - {t.user}</div>
+                              <div className="font-bold text-slate-700 flex items-center gap-2">
+                                  {t.category} 
+                                  <span className={`text-[9px] px-1.5 rounded ${t.user === 'Abdullah' ? 'bg-indigo-100 text-indigo-700' : 'bg-orange-100 text-orange-700'}`}>{t.user}</span>
+                              </div>
+                              <div className="text-xs text-slate-400">{t.desc} ({t.contact})</div>
+                              <div className="text-[10px] text-slate-300 mt-0.5">{formatDate(t.date)}</div>
                           </div>
                           <div className="flex items-center gap-3">
                               <div className={`font-bold ${t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
                                   {t.type === 'income' ? '+' : '-'}{formatMoney(t.amount)}
                               </div>
-                              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <div className="flex gap-1">
                                   <button onClick={()=>setEditTrans(t)} className="text-slate-400"><Edit3 size={14}/></button>
                                   <button onClick={()=>handleDelete(t.id)} className="text-rose-400"><Trash2 size={14}/></button>
                               </div>
                           </div>
                       </div>
                   ))}
+                  {filteredTransactions.length > 20 && (
+                      <button onClick={() => setShowAll(!showAll)} className="w-full py-2 text-xs text-slate-400 font-bold hover:text-slate-600">
+                          {showAll ? 'Daha Az Göster' : 'Tümünü Göster'}
+                      </button>
+                  )}
               </div>
 
               {(isAdd || editTrans) && (
@@ -1185,11 +1222,10 @@ export default function KallisteAppV4() {
                               <h3 className="font-bold text-lg">{editTrans ? 'Düzenle' : (type === 'income' ? 'Gelir Ekle' : 'Gider Ekle')}</h3>
                               <button onClick={()=>{setIsAdd(false); setEditTrans(null);}}><X/></button>
                           </div>
-                          {(editTrans ? editTrans : form).category !== undefined && (
-                              <>
+                          {/* DÜZELTME: Kategori alanı için güvenli render */}
                                   <select 
                                       className="w-full p-3 bg-slate-50 border rounded-xl"
-                                      value={editTrans ? editTrans.category : form.category}
+                                      value={(editTrans ? editTrans.category : form.category) || ''}
                                       onChange={e => editTrans ? setEditTrans({...editTrans, category:e.target.value}) : setForm({...form, category:e.target.value})}
                                   >
                                       <option value="">Kategori Seçiniz</option>
@@ -1197,21 +1233,21 @@ export default function KallisteAppV4() {
                                   </select>
                                   <input 
                                       className="w-full p-3 bg-slate-50 border rounded-xl" 
-                                      placeholder={type === 'income' ? "Kime Satıldı?" : "Kimden Alındı?"}
-                                      value={editTrans ? editTrans.contact : form.contact}
+                                      placeholder={((editTrans && editTrans.type === 'income') || (!editTrans && type === 'income')) ? "Kime Satıldı?" : "Kimden Alındı?"}
+                                      value={(editTrans ? editTrans.contact : form.contact) || ''}
                                       onChange={e => editTrans ? setEditTrans({...editTrans, contact:e.target.value}) : setForm({...form, contact:e.target.value})}
                                   />
                                   <input 
                                       className="w-full p-3 bg-slate-50 border rounded-xl" 
                                       placeholder="Açıklama"
-                                      value={editTrans ? editTrans.desc : form.desc}
+                                      value={(editTrans ? editTrans.desc : form.desc) || ''}
                                       onChange={e => editTrans ? setEditTrans({...editTrans, desc:e.target.value}) : setForm({...form, desc:e.target.value})}
                                   />
                                   <input 
                                       type="number"
                                       className="w-full p-3 bg-slate-50 border rounded-xl font-bold" 
                                       placeholder="Tutar (TL)"
-                                      value={editTrans ? editTrans.amount : form.amount}
+                                      value={(editTrans ? editTrans.amount : form.amount) || ''}
                                       onChange={e => editTrans ? setEditTrans({...editTrans, amount:e.target.value}) : setForm({...form, amount:e.target.value})}
                                   />
                                   <button 
@@ -1220,8 +1256,6 @@ export default function KallisteAppV4() {
                                   >
                                       Kaydet
                                   </button>
-                              </>
-                          )}
                       </div>
                   </div>
               )}
