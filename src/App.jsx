@@ -3,7 +3,7 @@ import {
   Package, FlaskConical, Library, ShoppingBag, 
   Plus, Trash2, CheckCircle, MapPin, 
   X, Lock, AlertTriangle, TrendingUp, TrendingDown,
-  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe, Clock, PenTool, Edit3, Filter, Search, ShoppingCart, Save, User, ArrowLeftRight, Users, LogOut
+  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe, Clock, PenTool, Edit3, Filter, Search, ShoppingCart, Save, User, ArrowLeftRight, Users, LogOut, Calculator
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -490,6 +490,7 @@ export default function KallisteAppV4() {
   // --- 4. BÖLÜM: KATALOG (GÜNCELLENMİŞ) ---
   const CatalogView = () => {
     const [editProd, setEditProd] = useState(null);
+    const [sellModal, setSellModal] = useState(null); // Yeni Satış Modalı
     const [filterCats, setFilterCats] = useState(['male', 'female', 'unisex']);
     const [searchTerm, setSearchTerm] = useState('');
 
@@ -501,9 +502,8 @@ export default function KallisteAppV4() {
         }
     };
 
-    // MERGED DATA: Stoktaki ürünler + Sadece üretimde olanlar
+    // MERGED DATA
     const mergedList = [...products];
-    // Üretimdeki ama stokta olmayanları bulup ekleyelim
     batches.filter(b => b.status === 'macerating').forEach(batch => {
         const exists = mergedList.find(p => p.name === batch.name);
         if (!exists) {
@@ -518,7 +518,6 @@ export default function KallisteAppV4() {
                 incomingDetails: { days: getDaysLeft(batch.startDate, batch.duration), qty: batch.quantity }
             });
         } else {
-             // Zaten var, üzerine bilgi ekleyelim
              exists.incomingDetails = { days: getDaysLeft(batch.startDate, batch.duration), qty: batch.quantity };
         }
     });
@@ -528,21 +527,28 @@ export default function KallisteAppV4() {
         p.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    const handleSell = (prod) => {
-        showConfirm(`${prod.name} satışı yapılsın mı?`, () => {
-             // Eğer geçici ürünse (stokta yoksa) işlem yapma
-             if(prod.isIncoming) { showToast('Ürün henüz stokta yok.', 'error'); return; }
+    // YENİ: Katalogdan Satış Yaparken de Fiyat Sorma
+    const initiateSell = (prod) => {
+        if(prod.isIncoming) { showToast('Ürün henüz stokta yok.', 'error'); return; }
+        setSellModal({ prod, price: prod.price });
+    };
 
-             const newProds = products.map(p => p.id === prod.id ? { ...p, stock: p.stock - 1 } : p);
-             setProducts(newProds);
-             saveToDb('products', newProds);
-             if(prod.price > 0) addTransaction('income', `${prod.name} Satışı`, prod.price);
-             showToast('Satıldı.');
-        });
+    const confirmSell = () => {
+        if (!sellModal) return;
+        const { prod, price } = sellModal;
+        const finalPrice = parseFloat(price);
+
+        const newProds = products.map(p => p.id === prod.id ? { ...p, stock: p.stock - 1 } : p);
+        setProducts(newProds);
+        saveToDb('products', newProds);
+        
+        if(finalPrice > 0) addTransaction('income', `${prod.name} Satışı`, finalPrice);
+        
+        setSellModal(null);
+        showToast('Satış yapıldı.');
     };
 
     const handleUpdateProduct = () => {
-        // Eğer geçici ürünse kaydetmeyi engelle veya yeni ürün olarak ekle (Burada basitlik için sadece mevcutları güncelliyoruz)
         if(editProd.isIncoming) {
              setEditProd(null);
              return;
@@ -609,7 +615,7 @@ export default function KallisteAppV4() {
                         </div>
                         {!p.isIncoming && (
                             <div className="flex gap-2 pt-2 border-t border-slate-50">
-                                <button onClick={()=>handleSell(p)} disabled={p.stock<=0} className="flex-1 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold disabled:opacity-50">Satış Yap</button>
+                                <button onClick={()=>initiateSell(p)} disabled={p.stock<=0} className="flex-1 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold disabled:opacity-50">Satış Yap</button>
                                 <button onClick={()=>setEditProd(p)} className="px-3 bg-slate-100 text-slate-600 rounded-lg"><Edit3 size={16}/></button>
                                 <button onClick={()=>handleDeleteProduct(p.id)} className="px-3 bg-rose-100 text-rose-600 rounded-lg"><Trash2 size={16}/></button>
                             </div>
@@ -642,6 +648,40 @@ export default function KallisteAppV4() {
                         <button onClick={handleUpdateProduct} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl">Kaydet</button>
                      </div>
                  </div>
+            )}
+
+            {sellModal && (
+                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-4 animate-in zoom-in-95">
+                        <div className="flex justify-between items-center border-b pb-2">
+                            <h3 className="font-bold text-lg">Hızlı Satış</h3>
+                            <button onClick={() => setSellModal(null)}><X size={20} /></button>
+                        </div>
+                        
+                        <div className="space-y-3">
+                            <p className="text-sm text-slate-600">
+                                {sellModal.prod.name} satılacak.
+                            </p>
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase">Satış Fiyatı (TL)</label>
+                                <input 
+                                    type="number" 
+                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1 font-bold text-lg text-emerald-600" 
+                                    value={sellModal.price} 
+                                    onChange={(e) => setSellModal({ ...sellModal, price: e.target.value })} 
+                                    autoFocus
+                                />
+                            </div>
+                        </div>
+
+                        <button 
+                            onClick={confirmSell} 
+                            className="w-full py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-colors shadow-lg"
+                        >
+                            Onayla
+                        </button>
+                    </div>
+                </div>
             )}
         </div>
     );
@@ -769,6 +809,7 @@ export default function KallisteAppV4() {
     const [isAdd, setIsAdd] = useState(false);
     const [isManualInput, setIsManualInput] = useState(false);
     const [editingOrder, setEditingOrder] = useState(null);
+    const [deliveryModal, setDeliveryModal] = useState(null); // { order: null, totalAmount: 0 }
     
     const [basket, setBasket] = useState([]);
     const [customerName, setCustomerName] = useState('');
@@ -911,33 +952,45 @@ export default function KallisteAppV4() {
     };
 
     const handleDeliver = (order) => {
-        showConfirm('Teslim edildi mi?', () => {
-            const items = order.items || [{ product: order.product, quantity: order.quantity }];
-            let totalAmount = 0;
-            items.forEach(item => {
-                const prod = products.find(p => p.name === item.product);
-                if(prod) totalAmount += (prod.price * item.quantity);
-            });
-            if(totalAmount > 0) {
-                const newTrans = { 
-                    id: Date.now(), 
-                    type: 'income', 
-                    category: 'Parfüm', 
-                    contact: order.customer, 
-                    desc: `Teslimat: ${order.customer}`, 
-                    amount: totalAmount, 
-                    date: new Date().toISOString(),
-                    user: activeUser 
-                };
-                const updatedTrans = [newTrans, ...transactions];
-                setTransactions(updatedTrans);
-                saveToDb('transactions', updatedTrans);
-            }
-            const updatedOrders = orders.map(o => o.id === order.id ? { ...o, status: 'completed' } : o);
-            setOrders(updatedOrders);
-            saveToDb('orders', updatedOrders);
-            showToast('Teslim edildi!');
+        const items = order.items || [{ product: order.product, quantity: order.quantity }];
+        let totalAmount = 0;
+        items.forEach(item => {
+            const prod = products.find(p => p.name === item.product);
+            if(prod) totalAmount += (prod.price * item.quantity);
         });
+        
+        // YENİ: Teslimat Onay Modalı Açılır
+        setDeliveryModal({ order, totalAmount });
+    };
+
+    const processDelivery = () => {
+        if (!deliveryModal) return;
+        
+        const { order, totalAmount } = deliveryModal;
+        const finalAmount = parseFloat(totalAmount);
+
+        if (finalAmount > 0) {
+            const newTrans = { 
+                id: Date.now(), 
+                type: 'income', 
+                category: 'Parfüm', 
+                contact: order.customer, 
+                desc: `Teslimat: ${order.customer}`, 
+                amount: finalAmount, 
+                date: new Date().toISOString(),
+                user: activeUser 
+            };
+            const updatedTrans = [newTrans, ...transactions];
+            setTransactions(updatedTrans);
+            saveToDb('transactions', updatedTrans);
+        }
+
+        const updatedOrders = orders.map(o => o.id === order.id ? { ...o, status: 'completed' } : o);
+        setOrders(updatedOrders);
+        saveToDb('orders', updatedOrders);
+        
+        setDeliveryModal(null);
+        showToast('Teslim edildi ve kasaya işlendi!');
     };
 
     const handleDeleteOrder = (id) => {
@@ -1086,6 +1139,44 @@ export default function KallisteAppV4() {
                     </div>
                 </div>
             )}
+
+            {/* Delivery Confirmation Modal */}
+            {deliveryModal && (
+                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-4 animate-in zoom-in-95">
+                        <div className="flex justify-between items-center border-b pb-2">
+                            <h3 className="font-bold text-lg">Teslimat ve Ödeme</h3>
+                            <button onClick={() => setDeliveryModal(null)}><X size={20} /></button>
+                        </div>
+                        
+                        <div className="space-y-3">
+                            <p className="text-sm text-slate-600">
+                                Sipariş teslim edilecek. Tahsil edilen tutarı giriniz.
+                                <br/>
+                                <span className="text-xs text-slate-400">(Katalog fiyatlarına göre hesaplanmıştır)</span>
+                            </p>
+                            
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase">Tahsilat Tutarı (TL)</label>
+                                <input 
+                                    type="number" 
+                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl mt-1 font-bold text-lg text-emerald-600" 
+                                    value={deliveryModal.totalAmount} 
+                                    onChange={(e) => setDeliveryModal({ ...deliveryModal, totalAmount: e.target.value })} 
+                                    autoFocus
+                                />
+                            </div>
+                        </div>
+
+                        <button 
+                            onClick={processDelivery} 
+                            className="w-full py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-colors shadow-lg"
+                        >
+                            Onayla ve Kapat
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
   };
@@ -1178,7 +1269,7 @@ export default function KallisteAppV4() {
 
               {/* LİSTE */}
               <div className="space-y-3 px-1">
-                  <div className="flex justify-between items-center mb-3">
+                  <div className="flex justify-between items-center mb-3 px-1">
                       <h3 className="text-xs font-bold text-slate-400 uppercase">Hareketler</h3>
                       <div className="flex bg-slate-100 rounded-lg p-0.5">
                           <button onClick={() => setFilterUser('All')} className={`px-2 py-0.5 rounded text-[10px] font-bold ${filterUser === 'All' ? 'bg-white shadow' : 'text-slate-400'}`}>Tümü</button>
@@ -1201,7 +1292,7 @@ export default function KallisteAppV4() {
                               <div className={`font-bold ${t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
                                   {t.type === 'income' ? '+' : '-'}{formatMoney(t.amount)}
                               </div>
-                              <div className="flex gap-1">
+                              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                   <button onClick={()=>setEditTrans(t)} className="text-slate-400"><Edit3 size={14}/></button>
                                   <button onClick={()=>handleDelete(t.id)} className="text-rose-400"><Trash2 size={14}/></button>
                               </div>
