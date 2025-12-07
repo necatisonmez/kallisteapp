@@ -3,7 +3,7 @@ import {
   Package, FlaskConical, Library, ShoppingBag, 
   Plus, Trash2, CheckCircle, MapPin, 
   X, Lock, AlertTriangle, TrendingUp, TrendingDown,
-  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe, Clock, PenTool, Edit3, Filter, Search, ShoppingCart, Save, User, ArrowLeftRight, Users, LogOut, Calculator
+  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe, Clock, PenTool, Edit3, Filter, Search, ShoppingCart, Save, User, ArrowLeftRight, Users, LogOut, Calculator, History
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -490,7 +490,7 @@ export default function KallisteAppV4() {
   // --- 4. BÖLÜM: KATALOG (GÜNCELLENMİŞ) ---
   const CatalogView = () => {
     const [editProd, setEditProd] = useState(null);
-    const [sellModal, setSellModal] = useState(null); // Yeni Satış Modalı
+    const [sellModal, setSellModal] = useState(null); 
     const [filterCats, setFilterCats] = useState(['male', 'female', 'unisex']);
     const [searchTerm, setSearchTerm] = useState('');
 
@@ -527,7 +527,6 @@ export default function KallisteAppV4() {
         p.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    // YENİ: Katalogdan Satış Yaparken de Fiyat Sorma
     const initiateSell = (prod) => {
         if(prod.isIncoming) { showToast('Ürün henüz stokta yok.', 'error'); return; }
         setSellModal({ prod, price: prod.price });
@@ -542,7 +541,7 @@ export default function KallisteAppV4() {
         setProducts(newProds);
         saveToDb('products', newProds);
         
-        if(finalPrice > 0) addTransaction('income', `${prod.name} Satışı`, finalPrice);
+        if(finalPrice >= 0) addTransaction('income', `${prod.name} Satışı`, finalPrice);
         
         setSellModal(null);
         showToast('Satış yapıldı.');
@@ -808,97 +807,129 @@ export default function KallisteAppV4() {
   const OrdersView = () => {
     const [isAdd, setIsAdd] = useState(false);
     const [isManualInput, setIsManualInput] = useState(false);
-    const [editingOrder, setEditingOrder] = useState(null);
-    const [deliveryModal, setDeliveryModal] = useState(null); // { order: null, totalAmount: 0 }
     
+    // Düzenleme State'i - Full Order Object
+    const [editingOrder, setEditingOrder] = useState(null);
+    const [originalOrderState, setOriginalOrderState] = useState(null); // Stok iadesi için eski hali
+
+    // Yeni Sipariş State'i
     const [basket, setBasket] = useState([]);
     const [customerName, setCustomerName] = useState('');
     const [newItem, setNewItem] = useState({ product: '', quantity: 1 });
     
+    // Edit Modal State (Ürün eklemek için)
+    const [editNewItem, setEditNewItem] = useState({ product: '', quantity: 1 });
+    const [isEditManualInput, setIsEditManualInput] = useState(false);
+
+    // Tarihçe Modu
+    const [showHistory, setShowHistory] = useState(false);
+
+    const [deliveryModal, setDeliveryModal] = useState(null); 
     const [searchTerm, setSearchTerm] = useState('');
 
-    // DÜZENLEME MODUNU BAŞLAT
+    // --- SİPARİŞ DÜZENLEME FONKSİYONLARI ---
+    
     const openEditOrder = (order) => {
-        setEditingOrder({
-            ...order,
-            items: order.items || [{ product: order.product, quantity: order.quantity, status: order.status }]
-        });
-    };
-
-    const saveEditedOrder = () => {
-        if (!editingOrder) return;
-
-        // Siparişteki her bir kalemin durumunu tekrar kontrol et
-        const updatedItems = editingOrder.items.map(item => {
-            const product = products.find(p => p.name === item.product);
-            const activeBatch = batches.find(b => b.name === item.product && b.status === 'macerating');
-            
-            let status = 'needs_production';
-            if (product && product.stock >= parseInt(item.quantity)) status = 'reserved';
-            else if (activeBatch) status = 'waiting';
-            
-            return { ...item, status };
-        });
-
-        const updatedOrder = {
-            ...editingOrder,
-            items: updatedItems,
-            status: updatedItems.some(i => i.status === 'needs_production') ? 'needs_production' : 
-                    updatedItems.some(i => i.status === 'waiting') ? 'waiting' : 'reserved'
-        };
-
-        const newOrders = orders.map(o => o.id === updatedOrder.id ? updatedOrder : o);
-        setOrders(newOrders);
-        saveToDb('orders', newOrders);
-        setEditingOrder(null);
-        showToast('Sipariş güncellendi.');
-    };
-
-    const removeOrderItem = (itemIndex) => {
-        if (!editingOrder) return;
-        const newItems = [...editingOrder.items];
-        const removedItem = newItems.splice(itemIndex, 1)[0];
+        // Eski kayıt uyumluluğu
+        const safeItems = order.items || [{ product: order.product, quantity: order.quantity, status: order.status }];
+        const fullOrder = { ...order, items: safeItems };
         
-        // Eğer silinen ürün 'reserved' ise stoğa geri ekle
-        if (removedItem.status === 'reserved') {
-            const productIndex = products.findIndex(p => p.name === removedItem.product);
-            if (productIndex > -1) {
-                const newProducts = [...products];
-                newProducts[productIndex].stock += parseInt(removedItem.quantity);
-                setProducts(newProducts);
-                saveToDb('products', newProducts);
-                showToast(`${removedItem.product} stoğa iade edildi.`);
-            }
-        }
+        setEditingOrder(JSON.parse(JSON.stringify(fullOrder))); // Deep copy to avoid mutating state directly
+        setOriginalOrderState(JSON.parse(JSON.stringify(fullOrder))); // Backup for stock rollback
+    };
 
+    // Düzenleme penceresinde sepete yeni ürün ekleme
+    const handleAddItemToEdit = () => {
+        if(!editNewItem.product) return;
+        const product = products.find(p => p.name === editNewItem.product);
+        const activeBatch = batches.find(b => b.name === editNewItem.product && b.status === 'macerating');
+        
+        let status = 'needs_production';
+        if (product && product.stock >= parseInt(editNewItem.quantity)) status = 'reserved';
+        else if (activeBatch) status = 'waiting';
+
+        const updatedItems = [...editingOrder.items, { ...editNewItem, status }];
+        setEditingOrder({ ...editingOrder, items: updatedItems });
+        setEditNewItem({ product: '', quantity: 1 });
+        setIsEditManualInput(false);
+    };
+
+    // Düzenleme penceresinde ürünü listeden silme (Sadece UI'dan siler, kaydet'e basınca stok güncellenir)
+    const removeOrderItem = (index) => {
+        const newItems = [...editingOrder.items];
+        newItems.splice(index, 1);
         setEditingOrder({ ...editingOrder, items: newItems });
     };
 
+    // Düzenleme penceresinde adet değiştirme
     const updateOrderItemQty = (index, newQty) => {
         const newItems = [...editingOrder.items];
-        const oldQty = parseInt(newItems[index].quantity);
-        const diff = parseInt(newQty) - oldQty;
-        
-        if (newItems[index].status === 'reserved') {
-            const productIndex = products.findIndex(p => p.name === newItems[index].product);
-            if (productIndex > -1) {
-                const currentStock = products[productIndex].stock;
-                if (currentStock >= diff) {
-                    const newProducts = [...products];
-                    newProducts[productIndex].stock -= diff;
-                    setProducts(newProducts);
-                    saveToDb('products', newProducts);
-                } else {
-                    showToast('Yetersiz stok!', 'error');
-                    return; 
-                }
-            }
-        }
-        
         newItems[index].quantity = newQty;
         setEditingOrder({ ...editingOrder, items: newItems });
     };
 
+    // Düzenlemeyi Kaydet ve Stokları Eşitle (Kritik Bölüm)
+    const saveEditedOrder = () => {
+        if (!editingOrder || !originalOrderState) return;
+
+        // 1. Önce Eski Siparişin Stoklarını İade Et
+        let currentProducts = [...products];
+        
+        originalOrderState.items.forEach(item => {
+            if (item.status === 'reserved') {
+                const prodIndex = currentProducts.findIndex(p => p.name === item.product);
+                if (prodIndex > -1) {
+                    currentProducts[prodIndex].stock += parseInt(item.quantity);
+                }
+            }
+        });
+
+        // 2. Yeni Sipariş İçin Stokları Tekrar Hesapla ve Düş
+        const finalItems = editingOrder.items.map(item => {
+            const prodIndex = currentProducts.findIndex(p => p.name === item.product);
+            const activeBatch = batches.find(b => b.name === item.product && b.status === 'macerating');
+            
+            let status = 'needs_production';
+            
+            // Eğer ürün stokta varsa ve yeterliyse
+            if (prodIndex > -1 && currentProducts[prodIndex].stock >= parseInt(item.quantity)) {
+                status = 'reserved';
+                currentProducts[prodIndex].stock -= parseInt(item.quantity);
+            } 
+            else if (activeBatch) {
+                status = 'waiting';
+            }
+            
+            return { ...item, status };
+        });
+
+        // 3. Veritabanını Güncelle
+        setProducts(currentProducts);
+        saveToDb('products', currentProducts);
+
+        // Ana durumu güncelle
+        let mainStatus = 'reserved';
+        if(finalItems.some(i => i.status === 'needs_production')) mainStatus = 'needs_production';
+        else if(finalItems.some(i => i.status === 'waiting')) mainStatus = 'waiting';
+
+        const finalOrder = {
+            ...editingOrder,
+            items: finalItems,
+            status: mainStatus,
+            note: `${finalItems.length} kalem`
+        };
+
+        const newOrders = orders.map(o => o.id === finalOrder.id ? finalOrder : o);
+        setOrders(newOrders);
+        saveToDb('orders', newOrders);
+        
+        setEditingOrder(null);
+        setOriginalOrderState(null);
+        showToast('Sipariş başarıyla güncellendi.');
+    };
+
+
+    // --- YENİ SİPARİŞ FONKSİYONLARI ---
     const handleAddToBasket = () => {
         if(!newItem.product) return;
         const product = products.find(p => p.name === newItem.product);
@@ -959,7 +990,6 @@ export default function KallisteAppV4() {
             if(prod) totalAmount += (prod.price * item.quantity);
         });
         
-        // YENİ: Teslimat Onay Modalı Açılır
         setDeliveryModal({ order, totalAmount });
     };
 
@@ -969,7 +999,7 @@ export default function KallisteAppV4() {
         const { order, totalAmount } = deliveryModal;
         const finalAmount = parseFloat(totalAmount);
 
-        if (finalAmount > 0) {
+        if (finalAmount >= 0) {
             const newTrans = { 
                 id: Date.now(), 
                 type: 'income', 
@@ -1002,7 +1032,7 @@ export default function KallisteAppV4() {
     };
 
     const filteredOrders = orders.filter(o => 
-        o.status !== 'completed' && 
+        (showHistory ? o.status === 'completed' : o.status !== 'completed') && 
         o.customer.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
@@ -1015,18 +1045,28 @@ export default function KallisteAppV4() {
                         <input className="pl-8 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs w-32" placeholder="Ara..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} />
                         <Search className="absolute left-2.5 top-2.5 text-slate-400" size={14}/>
                     </div>
+                    <button 
+                        onClick={() => setShowHistory(!showHistory)} 
+                        className={`p-2 rounded-xl transition-colors ${showHistory ? 'bg-indigo-100 text-indigo-700' : 'bg-white border border-slate-200 text-slate-400'}`}
+                    >
+                        <History size={20} />
+                    </button>
                     <button onClick={()=>setIsAdd(true)} className="bg-slate-900 text-white px-3 rounded-xl"><Plus size={20}/></button>
                 </div>
             </div>
 
             <div className="grid gap-3">
                 {filteredOrders.map(o => (
-                    <div key={o.id} className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex flex-col gap-2 relative group">
+                    <div key={o.id} className={`p-4 rounded-xl border shadow-sm flex flex-col gap-2 relative group ${o.status === 'completed' ? 'bg-slate-50 border-slate-200 opacity-75' : 'bg-white border-slate-200'}`}>
                         <div className="flex justify-between items-start">
                             <div className="font-bold text-slate-800">{o.customer}</div>
                             <div className="flex gap-1">
-                                <button onClick={()=>openEditOrder(o)} className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg"><Edit3 size={16}/></button>
-                                <button onClick={()=>handleDeliver(o)} className="p-1.5 bg-emerald-100 text-emerald-600 rounded-lg"><CheckCircle size={16}/></button>
+                                {o.status !== 'completed' && (
+                                    <>
+                                        <button onClick={()=>openEditOrder(o)} className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg"><Edit3 size={16}/></button>
+                                        <button onClick={()=>handleDeliver(o)} className="p-1.5 bg-emerald-100 text-emerald-600 rounded-lg"><CheckCircle size={16}/></button>
+                                    </>
+                                )}
                                 <button onClick={()=>handleDeleteOrder(o.id)} className="p-1.5 bg-rose-100 text-rose-600 rounded-lg"><Trash2 size={16}/></button>
                             </div>
                         </div>
@@ -1045,6 +1085,11 @@ export default function KallisteAppV4() {
                             <span>Kayıt: {o.createdBy || '-'}</span>
                             <span>{formatDate(o.date)}</span>
                         </div>
+                         {o.status === 'completed' && (
+                            <div className="absolute top-2 right-12 bg-emerald-100 text-emerald-600 text-[10px] px-2 py-0.5 rounded font-bold">
+                                TESLİM EDİLDİ
+                            </div>
+                        )}
                     </div>
                 ))}
             </div>
@@ -1114,28 +1159,59 @@ export default function KallisteAppV4() {
                 </div>
             )}
             
-            {/* Düzenleme Modalı */}
+            {/* GÜNCELLENMİŞ SİPARİŞ DÜZENLEME MODALI */}
             {editingOrder && (
                 <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
-                    <div className="bg-white w-full max-w-md rounded-2xl p-6 space-y-4 animate-in zoom-in-95">
+                    <div className="bg-white w-full max-w-md rounded-2xl p-6 space-y-4 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
                         <div className="flex justify-between items-center border-b pb-2">
                             <h3 className="font-bold text-lg">Siparişi Düzenle</h3>
                             <button onClick={()=>setEditingOrder(null)}><X size={20}/></button>
                         </div>
                         <input className="w-full p-2 border rounded-lg font-bold" value={editingOrder.customer} onChange={e=>setEditingOrder({...editingOrder, customer:e.target.value})} />
                         
+                        {/* Ürün Ekleme Alanı (Edit Modu) */}
+                        <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100">
+                             <div className="flex gap-2 mb-2">
+                                {isEditManualInput ? (
+                                    <input 
+                                        className="flex-1 min-w-0 p-2 border rounded-lg bg-white text-sm" 
+                                        placeholder="Ek Ürün Adı..." 
+                                        value={editNewItem.product} 
+                                        onChange={e=>setEditNewItem({...editNewItem, product:e.target.value})} 
+                                    />
+                                ) : (
+                                    <select className="flex-1 min-w-0 p-2 border rounded-lg text-sm bg-white" value={editNewItem.product} onChange={e=>setEditNewItem({...editNewItem, product:e.target.value})}>
+                                        <option value="">Ürün Ekle...</option>
+                                        {products.map((p,i)=><option key={i} value={p.name}>{p.name} (Stok)</option>)}
+                                    </select>
+                                )}
+                                <button onClick={()=>setIsEditManualInput(!isEditManualInput)} className="shrink-0 p-2 bg-white rounded-lg text-slate-500">
+                                    {isEditManualInput ? <ShoppingCart size={18}/> : <PenTool size={18}/>}
+                                </button>
+                            </div>
+                            <div className="flex gap-2">
+                                <input type="number" className="w-20 p-2 border rounded-lg bg-white" value={editNewItem.quantity} onChange={e=>setEditNewItem({...editNewItem, quantity:e.target.value})} />
+                                <button onClick={handleAddItemToEdit} className="flex-1 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700">Listeye Ekle</button>
+                            </div>
+                        </div>
+
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                            <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Mevcut Liste</label>
                             {editingOrder.items.map((item, idx) => (
                                 <div key={idx} className="flex justify-between items-center bg-white p-2 rounded shadow-sm mb-2 text-sm">
-                                    <span>{item.product}</span>
+                                    <div className="flex flex-col">
+                                        <span className="font-medium">{item.product}</span>
+                                        <span className={`text-[10px] ${item.status === 'reserved' ? 'text-emerald-500' : 'text-rose-500'}`}>{item.status === 'reserved' ? 'Stokta' : 'Yok/Bekliyor'}</span>
+                                    </div>
                                     <div className="flex items-center gap-2">
                                         <input type="number" className="w-12 p-1 border rounded text-center" value={item.quantity} onChange={(e) => updateOrderItemQty(idx, e.target.value)} />
                                         <button onClick={() => removeOrderItem(idx)} className="text-rose-400 p-1 hover:bg-rose-50 rounded"><Trash2 size={14}/></button>
                                     </div>
                                 </div>
                             ))}
+                            {editingOrder.items.length === 0 && <div className="text-center text-xs text-rose-500">Liste boş.</div>}
                         </div>
-                        <button onClick={saveEditedOrder} className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl">Kaydet</button>
+                        <button onClick={saveEditedOrder} className="w-full py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-lg">Değişiklikleri Kaydet</button>
                     </div>
                 </div>
             )}
@@ -1152,8 +1228,6 @@ export default function KallisteAppV4() {
                         <div className="space-y-3">
                             <p className="text-sm text-slate-600">
                                 Sipariş teslim edilecek. Tahsil edilen tutarı giriniz.
-                                <br/>
-                                <span className="text-xs text-slate-400">(Katalog fiyatlarına göre hesaplanmıştır)</span>
                             </p>
                             
                             <div>
@@ -1165,6 +1239,7 @@ export default function KallisteAppV4() {
                                     onChange={(e) => setDeliveryModal({ ...deliveryModal, totalAmount: e.target.value })} 
                                     autoFocus
                                 />
+                                <p className="text-[10px] text-slate-400 mt-1">*0 TL girilirse kasaya 0 olarak işlenir.</p>
                             </div>
                         </div>
 
