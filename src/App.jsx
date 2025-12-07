@@ -3,7 +3,7 @@ import {
   Package, FlaskConical, Library, ShoppingBag, 
   Plus, Trash2, CheckCircle, MapPin, 
   X, Lock, AlertTriangle, TrendingUp, TrendingDown,
-  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe, Clock, PenTool, Edit3, Filter, Search, ShoppingCart, Save, User, ArrowLeftRight, Users, LogOut, Calculator, History
+  Droplets, Wallet, Loader2, AlertCircle, ArrowRight, Globe, Clock, PenTool, Edit3, Filter, Search, ShoppingCart, Save, User, ArrowLeftRight, Users, LogOut, Calculator, History, Copy
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -170,10 +170,7 @@ export default function KallisteAppV4() {
   const saveToDb = async (collectionName, data) => {
       if(!db || !user) return;
       try { await setDoc(getDocRef(collectionName), { items: data }); } 
-      catch(e) { 
-          console.error("DB Save Error:", e);
-          showToast("Hata oluştu!", "error"); 
-      }
+      catch(e) { showToast("Hata oluştu!", "error"); }
   };
 
   const showToast = (message, type='success') => { setToast({message, type}); setTimeout(()=>setToast(null), 3000); };
@@ -186,7 +183,7 @@ export default function KallisteAppV4() {
       saveToDb('transactions', updated);
   };
 
-  // --- CARI (BORÇ/ALACAK) İŞLEMLERİ (DÜZELTİLDİ) ---
+  // --- CARI (BORÇ/ALACAK) İŞLEMLERİ ---
   const addDebt = (type, contact, amount, desc, dueDate) => {
       const newDebt = { 
           id: Date.now(), 
@@ -194,7 +191,7 @@ export default function KallisteAppV4() {
           contact, 
           amount: parseFloat(amount), 
           desc, 
-          dueDate: dueDate || null, // undefined kontrolü
+          dueDate: dueDate || null, 
           date: new Date().toISOString(),
           addedBy: activeUser
       };
@@ -459,7 +456,7 @@ export default function KallisteAppV4() {
                             <input type="number" className="flex-1 p-3 bg-slate-50 border rounded-xl" placeholder="Süre (Gün)" value={form.duration} onChange={e=>setForm({...form, duration:e.target.value})} />
                         </div>
                         
-                        {/* Hammadde Girişi - Yukarı Taşındı */}
+                        {/* Hammadde Girişi */}
                         <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                             <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Malzemeler</label>
                             <div className="flex flex-col gap-2 mb-3">
@@ -550,6 +547,31 @@ export default function KallisteAppV4() {
         showToast('Satış yapıldı.');
     };
 
+    const handleCopyList = () => {
+        const male = products.filter(p => p.category === 'male').map(p => p.name).join('\n- ');
+        const female = products.filter(p => p.category === 'female').map(p => p.name).join('\n- ');
+        const unisex = products.filter(p => p.category === 'unisex' || !p.category).map(p => p.name).join('\n- ');
+    
+        const text = `🌟 *KALLISTE PARFÜM LİSTESİ* 🌟\n\n` +
+                     `👨 *ERKEK PARFÜMLERİ*\n- ${male || 'Henüz eklenmedi'}\n\n` +
+                     `👩 *KADIN PARFÜMLERİ*\n- ${female || 'Henüz eklenmedi'}\n\n` +
+                     `✨ *UNISEX PARFÜMLER*\n- ${unisex || 'Henüz eklenmedi'}`;
+    
+        // Güvenli kopyalama yöntemi
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        document.body.appendChild(textArea);
+        textArea.select();
+        try {
+            document.execCommand('copy');
+            showToast('Liste kopyalandı! WhatsApp\'a yapıştırabilirsiniz.');
+        } catch (err) {
+            console.error('Kopyalama hatası:', err);
+            showToast('Kopyalama başarısız oldu.', 'error');
+        }
+        document.body.removeChild(textArea);
+    };
+
     const handleUpdateProduct = () => {
         if(editProd.isIncoming) {
              setEditProd(null);
@@ -578,6 +600,9 @@ export default function KallisteAppV4() {
                         <input className="pl-8 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs w-full" placeholder="Ara..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} />
                         <Search className="absolute left-2.5 top-2.5 text-slate-400" size={14}/>
                     </div>
+                    <button onClick={handleCopyList} className="bg-indigo-50 text-indigo-600 p-2 rounded-lg hover:bg-indigo-100 flex-shrink-0">
+                        <Copy size={18} />
+                    </button>
                 </div>
                 <div className="flex bg-white rounded-lg p-1 border border-slate-200">
                     {['male', 'female', 'unisex'].map(cat => (
@@ -810,9 +835,12 @@ export default function KallisteAppV4() {
   const OrdersView = () => {
     const [isAdd, setIsAdd] = useState(false);
     const [isManualInput, setIsManualInput] = useState(false);
-    const [editingOrder, setEditingOrder] = useState(null);
-    const [deliveryModal, setDeliveryModal] = useState(null); // { order: null, totalAmount: 0 }
     
+    // Düzenleme State'i - Full Order Object
+    const [editingOrder, setEditingOrder] = useState(null);
+    const [originalOrderState, setOriginalOrderState] = useState(null); // Stok iadesi için eski hali
+
+    // Yeni Sipariş State'i
     const [basket, setBasket] = useState([]);
     const [customerName, setCustomerName] = useState('');
     const [newItem, setNewItem] = useState({ product: '', quantity: 1 });
@@ -820,12 +848,13 @@ export default function KallisteAppV4() {
     // Edit Modal State (Ürün eklemek için)
     const [editNewItem, setEditNewItem] = useState({ product: '', quantity: 1 });
     const [isEditManualInput, setIsEditManualInput] = useState(false);
-    const [originalOrderState, setOriginalOrderState] = useState(null);
 
     const [showHistory, setShowHistory] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    const [deliveryModal, setDeliveryModal] = useState(null); 
 
-    // DÜZENLEME MODUNU BAŞLAT
+    // --- SİPARİŞ DÜZENLEME FONKSİYONLARI ---
+    
     const openEditOrder = (order) => {
         const safeItems = order.items || [{ product: order.product, quantity: order.quantity, status: order.status }];
         const fullOrder = { ...order, items: safeItems };
@@ -987,7 +1016,6 @@ export default function KallisteAppV4() {
         const { order, totalAmount } = deliveryModal;
         const finalAmount = parseFloat(totalAmount);
 
-        // 0 TL olsa bile işlem yapılmasına izin ver (ücretsiz teslimat takibi için)
         if (finalAmount >= 0) {
             const newTrans = { 
                 id: Date.now(), 
