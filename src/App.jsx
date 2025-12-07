@@ -170,7 +170,10 @@ export default function KallisteAppV4() {
   const saveToDb = async (collectionName, data) => {
       if(!db || !user) return;
       try { await setDoc(getDocRef(collectionName), { items: data }); } 
-      catch(e) { showToast("Hata oluştu!", "error"); }
+      catch(e) { 
+          console.error("DB Save Error:", e);
+          showToast("Hata oluştu!", "error"); 
+      }
   };
 
   const showToast = (message, type='success') => { setToast({message, type}); setTimeout(()=>setToast(null), 3000); };
@@ -183,7 +186,7 @@ export default function KallisteAppV4() {
       saveToDb('transactions', updated);
   };
 
-  // --- CARI (BORÇ/ALACAK) İŞLEMLERİ ---
+  // --- CARI (BORÇ/ALACAK) İŞLEMLERİ (DÜZELTİLDİ) ---
   const addDebt = (type, contact, amount, desc, dueDate) => {
       const newDebt = { 
           id: Date.now(), 
@@ -191,7 +194,7 @@ export default function KallisteAppV4() {
           contact, 
           amount: parseFloat(amount), 
           desc, 
-          dueDate,
+          dueDate: dueDate || null, // undefined kontrolü
           date: new Date().toISOString(),
           addedBy: activeUser
       };
@@ -807,12 +810,9 @@ export default function KallisteAppV4() {
   const OrdersView = () => {
     const [isAdd, setIsAdd] = useState(false);
     const [isManualInput, setIsManualInput] = useState(false);
-    
-    // Düzenleme State'i - Full Order Object
     const [editingOrder, setEditingOrder] = useState(null);
-    const [originalOrderState, setOriginalOrderState] = useState(null); // Stok iadesi için eski hali
-
-    // Yeni Sipariş State'i
+    const [deliveryModal, setDeliveryModal] = useState(null); // { order: null, totalAmount: 0 }
+    
     const [basket, setBasket] = useState([]);
     const [customerName, setCustomerName] = useState('');
     const [newItem, setNewItem] = useState({ product: '', quantity: 1 });
@@ -820,55 +820,20 @@ export default function KallisteAppV4() {
     // Edit Modal State (Ürün eklemek için)
     const [editNewItem, setEditNewItem] = useState({ product: '', quantity: 1 });
     const [isEditManualInput, setIsEditManualInput] = useState(false);
+    const [originalOrderState, setOriginalOrderState] = useState(null);
 
-    // Tarihçe Modu
     const [showHistory, setShowHistory] = useState(false);
-
-    const [deliveryModal, setDeliveryModal] = useState(null); 
     const [searchTerm, setSearchTerm] = useState('');
 
-    // --- SİPARİŞ DÜZENLEME FONKSİYONLARI ---
-    
+    // DÜZENLEME MODUNU BAŞLAT
     const openEditOrder = (order) => {
-        // Eski kayıt uyumluluğu
         const safeItems = order.items || [{ product: order.product, quantity: order.quantity, status: order.status }];
         const fullOrder = { ...order, items: safeItems };
         
-        setEditingOrder(JSON.parse(JSON.stringify(fullOrder))); // Deep copy to avoid mutating state directly
-        setOriginalOrderState(JSON.parse(JSON.stringify(fullOrder))); // Backup for stock rollback
+        setEditingOrder(JSON.parse(JSON.stringify(fullOrder))); 
+        setOriginalOrderState(JSON.parse(JSON.stringify(fullOrder))); 
     };
 
-    // Düzenleme penceresinde sepete yeni ürün ekleme
-    const handleAddItemToEdit = () => {
-        if(!editNewItem.product) return;
-        const product = products.find(p => p.name === editNewItem.product);
-        const activeBatch = batches.find(b => b.name === editNewItem.product && b.status === 'macerating');
-        
-        let status = 'needs_production';
-        if (product && product.stock >= parseInt(editNewItem.quantity)) status = 'reserved';
-        else if (activeBatch) status = 'waiting';
-
-        const updatedItems = [...editingOrder.items, { ...editNewItem, status }];
-        setEditingOrder({ ...editingOrder, items: updatedItems });
-        setEditNewItem({ product: '', quantity: 1 });
-        setIsEditManualInput(false);
-    };
-
-    // Düzenleme penceresinde ürünü listeden silme (Sadece UI'dan siler, kaydet'e basınca stok güncellenir)
-    const removeOrderItem = (index) => {
-        const newItems = [...editingOrder.items];
-        newItems.splice(index, 1);
-        setEditingOrder({ ...editingOrder, items: newItems });
-    };
-
-    // Düzenleme penceresinde adet değiştirme
-    const updateOrderItemQty = (index, newQty) => {
-        const newItems = [...editingOrder.items];
-        newItems[index].quantity = newQty;
-        setEditingOrder({ ...editingOrder, items: newItems });
-    };
-
-    // Düzenlemeyi Kaydet ve Stokları Eşitle (Kritik Bölüm)
     const saveEditedOrder = () => {
         if (!editingOrder || !originalOrderState) return;
 
@@ -891,7 +856,6 @@ export default function KallisteAppV4() {
             
             let status = 'needs_production';
             
-            // Eğer ürün stokta varsa ve yeterliyse
             if (prodIndex > -1 && currentProducts[prodIndex].stock >= parseInt(item.quantity)) {
                 status = 'reserved';
                 currentProducts[prodIndex].stock -= parseInt(item.quantity);
@@ -903,11 +867,9 @@ export default function KallisteAppV4() {
             return { ...item, status };
         });
 
-        // 3. Veritabanını Güncelle
         setProducts(currentProducts);
         saveToDb('products', currentProducts);
 
-        // Ana durumu güncelle
         let mainStatus = 'reserved';
         if(finalItems.some(i => i.status === 'needs_production')) mainStatus = 'needs_production';
         else if(finalItems.some(i => i.status === 'waiting')) mainStatus = 'waiting';
@@ -928,8 +890,34 @@ export default function KallisteAppV4() {
         showToast('Sipariş başarıyla güncellendi.');
     };
 
+    // Edit modal helper functions
+    const handleAddItemToEdit = () => {
+        if(!editNewItem.product) return;
+        const product = products.find(p => p.name === editNewItem.product);
+        const activeBatch = batches.find(b => b.name === editNewItem.product && b.status === 'macerating');
+        
+        let status = 'needs_production';
+        if (product && product.stock >= parseInt(editNewItem.quantity)) status = 'reserved';
+        else if (activeBatch) status = 'waiting';
 
-    // --- YENİ SİPARİŞ FONKSİYONLARI ---
+        const updatedItems = [...editingOrder.items, { ...editNewItem, status }];
+        setEditingOrder({ ...editingOrder, items: updatedItems });
+        setEditNewItem({ product: '', quantity: 1 });
+        setIsEditManualInput(false);
+    };
+
+    const removeOrderItem = (index) => {
+        const newItems = [...editingOrder.items];
+        newItems.splice(index, 1);
+        setEditingOrder({ ...editingOrder, items: newItems });
+    };
+
+    const updateOrderItemQty = (index, newQty) => {
+        const newItems = [...editingOrder.items];
+        newItems[index].quantity = newQty;
+        setEditingOrder({ ...editingOrder, items: newItems });
+    };
+
     const handleAddToBasket = () => {
         if(!newItem.product) return;
         const product = products.find(p => p.name === newItem.product);
@@ -999,6 +987,7 @@ export default function KallisteAppV4() {
         const { order, totalAmount } = deliveryModal;
         const finalAmount = parseFloat(totalAmount);
 
+        // 0 TL olsa bile işlem yapılmasına izin ver (ücretsiz teslimat takibi için)
         if (finalAmount >= 0) {
             const newTrans = { 
                 id: Date.now(), 
