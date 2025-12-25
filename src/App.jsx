@@ -42,6 +42,7 @@ const APP_ACCESS_CODE = "kalliste25";
 const EXPENSE_CATEGORIES = ['Etil Alkol', 'Şişe', 'Esans', 'Diğer Hammadde', 'Genel Gider'];
 const INCOME_CATEGORIES = ['Parfüm', 'Oda Kokusu', 'Oto Kokusu', 'Kolonya', 'Diğer Gelir'];
 const USERS = ['Abdullah', 'Barış'];
+const SIZES = ['30ml', '50ml', '80ml', '100ml']; // Yeni Boyutlar
 
 // --- YARDIMCI FONKSİYONLAR ---
 const formatMoney = (amt) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(amt || 0);
@@ -106,29 +107,6 @@ export default function KallisteAppV4() {
     return () => unsubscribe();
   }, []);
 
-  const handleLoginPassword = (e) => {
-      e.preventDefault();
-      if(accessInput === APP_ACCESS_CODE) {
-          setLoginStep(1); 
-      } else {
-          showToast('Hatalı Şifre', 'error');
-      }
-  };
-
-  const handleUserSelect = (selectedUser) => {
-      setActiveUser(selectedUser);
-      sessionStorage.setItem('app_unlocked', 'true');
-      sessionStorage.setItem('kalliste_user', selectedUser);
-      setLoginStep(2);
-  };
-
-  const handleLogout = () => {
-      setLoginStep(0);
-      setAccessInput('');
-      setActiveUser('');
-      sessionStorage.clear();
-  };
-
   // --- DATA SYNC ---
   const getDocRef = (collectionName) => {
     return doc(db, 'artifacts', DATA_NAMESPACE, 'public', 'data', collectionName, 'items');
@@ -176,8 +154,17 @@ export default function KallisteAppV4() {
   const showToast = (message, type='success') => { setToast({message, type}); setTimeout(()=>setToast(null), 3000); };
   const showConfirm = (message, onConfirm) => setConfirmModal({message, onConfirm});
 
-  const addTransaction = (type, desc, amount) => {
-      const newTrans = { id: Date.now(), type, desc, amount: parseFloat(amount), date: new Date().toISOString(), user: activeUser };
+  // GÜNCELLENDİ: contact parametresi eklendi
+  const addTransaction = (type, desc, amount, contact = '') => {
+      const newTrans = { 
+          id: Date.now(), 
+          type, 
+          desc, 
+          amount: parseFloat(amount), 
+          contact,
+          date: new Date().toISOString(), 
+          user: activeUser 
+      };
       const updated = [newTrans, ...transactions];
       setTransactions(updated);
       saveToDb('transactions', updated);
@@ -198,6 +185,30 @@ export default function KallisteAppV4() {
       const updated = [newDebt, ...debts];
       setDebts(updated);
       saveToDb('debts', updated);
+  };
+
+   // --- LOGIN HANDLER EKLENDİ ---
+   const handleLoginPassword = (e) => {
+      e.preventDefault();
+      if(accessInput === APP_ACCESS_CODE) {
+          setLoginStep(1); 
+      } else {
+          showToast('Hatalı Şifre', 'error');
+      }
+  };
+
+  const handleUserSelect = (selectedUser) => {
+      setActiveUser(selectedUser);
+      sessionStorage.setItem('app_unlocked', 'true');
+      sessionStorage.setItem('kalliste_user', selectedUser);
+      setLoginStep(2);
+  };
+
+  const handleLogout = () => {
+      setLoginStep(0);
+      setAccessInput('');
+      setActiveUser('');
+      sessionStorage.clear();
   };
 
   // --- 3. BÖLÜM: ÜRETİM ---
@@ -456,7 +467,7 @@ export default function KallisteAppV4() {
                             <input type="number" className="flex-1 p-3 bg-slate-50 border rounded-xl" placeholder="Süre (Gün)" value={form.duration} onChange={e=>setForm({...form, duration:e.target.value})} />
                         </div>
                         
-                        {/* Hammadde Girişi */}
+                        {/* Hammadde Girişi - Yukarı Taşındı */}
                         <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                             <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Malzemeler</label>
                             <div className="flex flex-col gap-2 mb-3">
@@ -557,7 +568,6 @@ export default function KallisteAppV4() {
                      `👩 *KADIN PARFÜMLERİ*\n- ${female || 'Henüz eklenmedi'}\n\n` +
                      `✨ *UNISEX PARFÜMLER*\n- ${unisex || 'Henüz eklenmedi'}`;
     
-        // Güvenli kopyalama yöntemi
         const textArea = document.createElement("textarea");
         textArea.value = text;
         document.body.appendChild(textArea);
@@ -718,7 +728,7 @@ export default function KallisteAppV4() {
   const MaterialsView = () => {
     const [isAdd, setIsAdd] = useState(false);
     const [editMaterial, setEditMaterial] = useState(null);
-    const [form, setForm] = useState({ name: '', quantity: '', unit: 'ml', minStock: '', cost: '' });
+    const [form, setForm] = useState({ name: '', quantity: '', unit: 'ml', minStock: '', cost: '', source: '' });
     const [searchTerm, setSearchTerm] = useState('');
 
     const handleSave = () => {
@@ -727,8 +737,9 @@ export default function KallisteAppV4() {
         const newRaw = [...rawMaterials, newItem];
         setRawMaterials(newRaw);
         saveToDb('rawMaterials', newRaw);
-        if(form.cost) addTransaction('expense', `${form.name} Alımı`, form.cost);
-        setIsAdd(false); setForm({ name: '', quantity: '', unit: 'ml', minStock: '', cost: '' });
+        // GÜNCELLENDİ: Kaynak bilgisi (source) finansa 'contact' olarak aktarılıyor
+        if(form.cost) addTransaction('expense', `${form.name} Alımı`, form.cost, form.source);
+        setIsAdd(false); setForm({ name: '', quantity: '', unit: 'ml', minStock: '', cost: '', source: '' });
     };
 
     const handleDelete = (id) => {
@@ -767,6 +778,10 @@ export default function KallisteAppV4() {
                     <div className="bg-white w-full max-w-sm rounded-2xl p-6 space-y-3">
                         <h3 className="font-bold">Yeni Malzeme</h3>
                         <input className="w-full p-2 border rounded-lg" placeholder="Adı" value={form.name} onChange={e=>setForm({...form, name:e.target.value})} />
+                        
+                        {/* YENİ: Tedarikçi / Kaynak Alanı */}
+                        <input className="w-full p-2 border rounded-lg" placeholder="Tedarikçi / Nereden?" value={form.source} onChange={e=>setForm({...form, source:e.target.value})} />
+
                         <div className="flex gap-2">
                             <input className="flex-1 p-2 border rounded-lg" type="number" placeholder="Miktar" value={form.quantity} onChange={e=>setForm({...form, quantity:e.target.value})} />
                             <select className="p-2 border rounded-lg" value={form.unit} onChange={e=>setForm({...form, unit:e.target.value})}>
@@ -835,26 +850,17 @@ export default function KallisteAppV4() {
   const OrdersView = () => {
     const [isAdd, setIsAdd] = useState(false);
     const [isManualInput, setIsManualInput] = useState(false);
-    
-    // Düzenleme State'i - Full Order Object
     const [editingOrder, setEditingOrder] = useState(null);
-    const [originalOrderState, setOriginalOrderState] = useState(null); // Stok iadesi için eski hali
-
-    // Yeni Sipariş State'i
+    const [deliveryModal, setDeliveryModal] = useState(null); // { order: null, totalAmount: 0 }
+    
     const [basket, setBasket] = useState([]);
     const [customerName, setCustomerName] = useState('');
-    const [newItem, setNewItem] = useState({ product: '', quantity: 1 });
+    const [newItem, setNewItem] = useState({ product: '', quantity: 1, size: '50ml' });
     
-    // Edit Modal State (Ürün eklemek için)
-    const [editNewItem, setEditNewItem] = useState({ product: '', quantity: 1 });
-    const [isEditManualInput, setIsEditManualInput] = useState(false);
-
-    const [showHistory, setShowHistory] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
-    const [deliveryModal, setDeliveryModal] = useState(null); 
+    const [showHistory, setShowHistory] = useState(false);
 
-    // --- SİPARİŞ DÜZENLEME FONKSİYONLARI ---
-    
+    // DÜZENLEME MODUNU BAŞLAT
     const openEditOrder = (order) => {
         const safeItems = order.items || [{ product: order.product, quantity: order.quantity, status: order.status }];
         const fullOrder = { ...order, items: safeItems };
@@ -931,7 +937,7 @@ export default function KallisteAppV4() {
 
         const updatedItems = [...editingOrder.items, { ...editNewItem, status }];
         setEditingOrder({ ...editingOrder, items: updatedItems });
-        setEditNewItem({ product: '', quantity: 1 });
+        setEditNewItem({ product: '', quantity: 1, size: '50ml' });
         setIsEditManualInput(false);
     };
 
@@ -963,7 +969,7 @@ export default function KallisteAppV4() {
         }
         
         setBasket([...basket, { ...newItem, status, note, id: Date.now() }]);
-        setNewItem({ product: '', quantity: 1 });
+        setNewItem({ product: '', quantity: 1, size: '50ml' });
         setIsManualInput(false);
     };
 
@@ -1016,6 +1022,7 @@ export default function KallisteAppV4() {
         const { order, totalAmount } = deliveryModal;
         const finalAmount = parseFloat(totalAmount);
 
+        // 0 TL olsa bile işlem yapılmasına izin ver (ücretsiz teslimat takibi için)
         if (finalAmount >= 0) {
             const newTrans = { 
                 id: Date.now(), 
@@ -1090,7 +1097,7 @@ export default function KallisteAppV4() {
                         <div className="space-y-1">
                             {(o.items || [{product:o.product, quantity:o.quantity, status:o.status}]).map((item, i) => (
                                 <div key={i} className="flex justify-between text-sm border-b border-slate-50 pb-1">
-                                    <span className="text-slate-600">{item.product} x{item.quantity}</span>
+                                    <span className="text-slate-600">{item.product} ({item.size}) x{item.quantity}</span>
                                     {item.note && <span className="text-[10px] text-amber-600 italic ml-2">{item.note}</span>}
                                     {item.status === 'reserved' && <span className="text-[10px] font-bold text-emerald-500 bg-emerald-50 px-1 rounded">Stokta</span>}
                                     {item.status === 'waiting' && <span className="text-[10px] font-bold text-amber-500 bg-amber-50 px-1 rounded">Bekliyor</span>}
@@ -1147,6 +1154,9 @@ export default function KallisteAppV4() {
                                 </button>
                             </div>
                             <div className="flex gap-2">
+                                <select className="w-24 p-2 border rounded-lg text-sm" value={newItem.size} onChange={e=>setNewItem({...newItem, size:e.target.value})}>
+                                    {SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
                                 <input type="number" className="w-20 p-2 border rounded-lg" value={newItem.quantity} onChange={e=>setNewItem({...newItem, quantity:e.target.value})} />
                                 <button onClick={handleAddToBasket} className="flex-1 bg-indigo-100 text-indigo-700 font-bold rounded-lg hover:bg-indigo-200">Sepete Ekle</button>
                             </div>
@@ -1157,7 +1167,7 @@ export default function KallisteAppV4() {
                             {basket.length === 0 ? <div className="text-center text-slate-400 text-sm py-4">Sepet boş</div> : basket.map((item, idx) => (
                                 <div key={item.id} className="flex justify-between items-center bg-white p-2 rounded shadow-sm text-sm mb-1">
                                     <div className="flex flex-col">
-                                        <span>{item.product} x{item.quantity}</span>
+                                        <span>{item.product} ({item.size}) x{item.quantity}</span>
                                         {item.note && <span className="text-[10px] text-amber-600">{item.note}</span>}
                                     </div>
                                     <button onClick={()=>setBasket(basket.filter(b=>b.id!==item.id))} className="text-rose-400"><X size={14}/></button>
@@ -1200,6 +1210,11 @@ export default function KallisteAppV4() {
                                     <select className="flex-1 min-w-0 p-2 border rounded-lg text-sm bg-white" value={editNewItem.product} onChange={e=>setEditNewItem({...editNewItem, product:e.target.value})}>
                                         <option value="">Ürün Ekle...</option>
                                         {products.map((p,i)=><option key={i} value={p.name}>{p.name} (Stok)</option>)}
+                                        {batches.filter(b => b.status === 'macerating').map(b => (
+                                            <option key={b.id} value={b.name} className="text-amber-600">
+                                                {b.name} (Demleniyor - {getDaysLeft(b.startDate, b.duration)} Gün)
+                                            </option>
+                                        ))}
                                     </select>
                                 )}
                                 <button onClick={()=>setIsEditManualInput(!isEditManualInput)} className="shrink-0 p-2 bg-white rounded-lg text-slate-500">
@@ -1207,6 +1222,9 @@ export default function KallisteAppV4() {
                                 </button>
                             </div>
                             <div className="flex gap-2">
+                                <select className="w-24 p-2 border rounded-lg text-sm bg-white" value={editNewItem.size} onChange={e=>setEditNewItem({...editNewItem, size:e.target.value})}>
+                                    {SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
                                 <input type="number" className="w-20 p-2 border rounded-lg bg-white" value={editNewItem.quantity} onChange={e=>setEditNewItem({...editNewItem, quantity:e.target.value})} />
                                 <button onClick={handleAddItemToEdit} className="flex-1 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700">Listeye Ekle</button>
                             </div>
@@ -1217,7 +1235,7 @@ export default function KallisteAppV4() {
                             {editingOrder.items.map((item, idx) => (
                                 <div key={idx} className="flex justify-between items-center bg-white p-2 rounded shadow-sm mb-2 text-sm">
                                     <div className="flex flex-col">
-                                        <span className="font-medium">{item.product}</span>
+                                        <span className="font-medium">{item.product} ({item.size})</span>
                                         <span className={`text-[10px] ${item.status === 'reserved' ? 'text-emerald-500' : 'text-rose-500'}`}>{item.status === 'reserved' ? 'Stokta' : 'Yok/Bekliyor'}</span>
                                     </div>
                                     <div className="flex items-center gap-2">
